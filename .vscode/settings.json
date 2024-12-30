@@ -1,0 +1,6 @@
+{
+    "idf.port": "/dev/ttyUSB0",
+    "idf.flashType": "UART",
+    "idf.espIdfPath": "/home/felix/esp/v5.4/esp-idf",
+    "idf.toolsPath": "/home/felix/.espressif"
+}
