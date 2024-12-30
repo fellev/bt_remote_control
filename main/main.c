@@ -21,16 +21,32 @@
 #include "esp_spp_api.h"
 #include "esp_bt_defs.h"
 #include "esp_mac.h"
+#include "esp_wifi.h"
+#include "esp_netif.h"
+#include "esp_event.h"
+
+#include "mqtt_client.h"
+
 
 #include "time.h"
 #include "sys/time.h"
 
 #define SPP_TAG "BT_DOOR_KEY"
+#define MQTT_TAG "MQTT"
+#define WIFI_TAG "WIFI"
 #define SPP_SERVER_NAME "SPP_SERVER"
 #define TARGET_DEVICE_NAME "Felix's S23 Ultra"
 #define SPP_SHOW_DATA 0
 #define SPP_SHOW_SPEED 1
 #define SPP_SHOW_MODE SPP_SHOW_SPEED    /*Choose show mode: show data or speed*/
+
+#define WIFI_SSID "MyHomeNetwork"
+#define WIFI_PASS "Barbur18bet"
+#define MQTT_URI "mqtt://your_home_assistant_ip"
+#define MQTT_USER "your_mqtt_username"
+#define MQTT_PASS "your_mqtt_password"
+
+static const char *TAG = "MQTT_EXAMPLE";
 
 static const char local_device_name[] = CONFIG_EXAMPLE_LOCAL_DEVICE_NAME;
 static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
@@ -43,6 +59,74 @@ static const esp_spp_sec_t sec_mask = ESP_SPP_SEC_AUTHENTICATE;
 static const esp_spp_role_t role_slave = ESP_SPP_ROLE_SLAVE;
 esp_bd_addr_t target_bd_addr = {0}; // Store Bluetooth address of the phone
 static uint32_t spp_handle = 0;
+
+// Define the Bluetooth address of the Android device bc:32:b2:8b:3a:90
+esp_bd_addr_t android_bd_addr = {0xbc, 0x32, 0xb2, 0x8b, 0x3a, 0x90};  // Replace with actual address
+
+
+esp_err_t wifi_init_sta() {
+    esp_netif_create_default_wifi_sta();
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&cfg);
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_start();
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = "MyHomeNetwork",
+            .password = "Barbur18bet",
+        },
+    };
+    esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    esp_wifi_connect();
+    return ESP_OK;
+}
+
+
+static esp_mqtt_client_handle_t client = NULL;
+
+static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
+    switch (event->event_id) {
+        case MQTT_EVENT_CONNECTED:
+            ESP_LOGI(MQTT_TAG, "MQTT Connected");
+            break;
+        case MQTT_EVENT_DISCONNECTED:
+            ESP_LOGI(MQTT_TAG, "MQTT Disconnected");
+            break;
+        case MQTT_EVENT_SUBSCRIBED:
+            ESP_LOGI(MQTT_TAG, "Subscribed to topic %s", event->topic);
+            break;
+        case MQTT_EVENT_UNSUBSCRIBED:
+            ESP_LOGI(MQTT_TAG, "Unsubscribed from topic %s", event->topic);
+            break;
+        case MQTT_EVENT_PUBLISHED:
+            ESP_LOGI(MQTT_TAG, "Message published to topic %s", event->topic);
+            break;
+        case MQTT_EVENT_DATA:
+            ESP_LOGI(MQTT_TAG, "Received data: %.*s", event->data_len, event->data);
+            break;
+        case MQTT_EVENT_ERROR:
+            ESP_LOGE(MQTT_TAG, "Error occurred: %s", esp_err_to_name(event->error_handle->connect_return_code));
+            break;
+        default:
+            ESP_LOGI(MQTT_TAG, "Unhandled event %d", event->event_id);
+            break;
+    }
+    return ESP_OK;
+}
+
+
+// void mqtt_app_start() {
+//     esp_mqtt_client_config_t mqtt_cfg = {
+//         .uri = "mqtt://your_home_assistant_ip",
+//         .username = "your_mqtt_username",
+//         .password = "your_mqtt_password",
+//         .event_handle = mqtt_event_handler,
+//     };
+
+//     client = esp_mqtt_client_init(&mqtt_cfg);
+//     esp_mqtt_client_start(client);
+// }
 
 static char *bda2str(uint8_t * bda, char *str, size_t size)
 {
@@ -68,6 +152,21 @@ static void print_speed(void)
     time_old.tv_usec = time_new.tv_usec;
 }
 
+esp_err_t connect_to_android() {
+    // How to find scn in logcat: 
+    // 2024-12-30 15:40:00.148  4148-4325  bt_stack                com.android.bluetooth                I  [INFO:port_api.cc(220)] RFCOMM_CreateConnectionWithSecurity: bd_addr=ff:ff:ff:ff:ff:ff, scn=9, is_server=1, mtu=990, uuid=000000, dlci=18, signal_state=0x0b, p_port=0x78111cbb78
+    esp_err_t err = esp_spp_connect(ESP_SPP_SEC_NONE, //ESP_SPP_SEC_AUTHENTICATE,  // Security: Authenticate
+                                    ESP_SPP_ROLE_MASTER,      // Role: Master
+                                    11,                        // Server channel number (default: 1)
+                                    android_bd_addr);         // Bluetooth address of Android device
+    if (err == ESP_OK) {
+        ESP_LOGI(SPP_TAG, "Connection initiated successfully.");
+    } else {
+        ESP_LOGE(SPP_TAG, "Failed to initiate connection: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
 static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 {
     char bda_str[18] = {0};
@@ -77,6 +176,8 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         if (param->init.status == ESP_SPP_SUCCESS) {
             ESP_LOGI(SPP_TAG, "ESP_SPP_INIT_EVT");
             esp_spp_start_srv(sec_mask, role_slave, 0, SPP_SERVER_NAME);
+             ESP_LOGI(SPP_TAG, "SPP initialized, starting connection...");
+            //  connect_to_android();
         } else {
             ESP_LOGE(SPP_TAG, "ESP_SPP_INIT_EVT status:%d", param->init.status);
         }
@@ -265,6 +366,12 @@ void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
         case ESP_BT_GAP_DISC_RES_EVT:
             esp_bt_gap_rec(param);
             break;
+        case ESP_BT_GAP_RMT_SRVCS_EVT:
+            ESP_LOGI(SPP_TAG, "Remote services discovered.");
+            break;            
+        case ESP_BT_GAP_RMT_SRVC_REC_EVT:
+            ESP_LOGI(SPP_TAG, "Remote service record received.");
+            break;
         default: {
             ESP_LOGI(SPP_TAG, "event: %d", event);
             break;
@@ -322,21 +429,6 @@ void start_scan() {
     esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY, 10, 0);  // 10s inquiry
 }
 
-// Define the Bluetooth address of the Android device bc:32:b2:8b:3a:90
-esp_bd_addr_t android_bd_addr = {0xbc, 0x32, 0xb2, 0x8b, 0x3a, 0x90};  // Replace with actual address
-
-esp_err_t connect_to_android() {
-    esp_err_t err = esp_spp_connect(ESP_SPP_SEC_NONE, //ESP_SPP_SEC_AUTHENTICATE,  // Security: Authenticate
-                                    ESP_SPP_ROLE_MASTER,      // Role: Master
-                                    10,                        // Server channel number (default: 1)
-                                    android_bd_addr);         // Bluetooth address of Android device
-    if (err == ESP_OK) {
-        ESP_LOGI(SPP_TAG, "Connection initiated successfully.");
-    } else {
-        ESP_LOGE(SPP_TAG, "Failed to initiate connection: %s", esp_err_to_name(err));
-    }
-    return err;
-}
 
 void send_message(const char *message) {
     if (spp_handle != 0) { // Ensure the connection is open
@@ -435,7 +527,27 @@ void app_main(void)
 
     if (connect_to_android() == ESP_OK)
     {
-        while(spp_handle == 0){};
+        while(spp_handle == 0) {
+            vTaskDelay(1);
+        };
         send_message("Hello, Android!");
     }
+
+    // while (true) {
+    //     if (spp_handle == 0)
+    //     {
+    //         ESP_LOGI(SPP_TAG, "Attempting to connect...");
+    //         connect_to_android();
+    //     }
+    //     else
+    //     {
+    //         send_message("Hello, Android!");
+    //     }
+        
+    //     vTaskDelay(5000 / portTICK_PERIOD_MS); // Retry every 5 seconds
+    // }
+
+    // if (wifi_init_sta() == ESP_OK) {
+    //     ESP_LOGI(WIFI_TAG, "WIFI connected...");
+    // }
 }
