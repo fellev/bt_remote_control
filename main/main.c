@@ -49,8 +49,8 @@
 #define MQTT_URI "mqtt://your_home_assistant_ip"
 #define MQTT_USER "your_mqtt_username"
 #define MQTT_PASS "your_mqtt_password"
+#define MQTT_TOPIC_PAIRING "cmd/bt_door_key/pairing"
 
-static const char *TAG = "MQTT_EXAMPLE";
 static const char *TAG_WIFI = "WIFI";
 
 static struct timeval time_new, time_old;
@@ -86,6 +86,7 @@ static void mqtt_event_handler(void* event_handler_arg, esp_event_base_t event_b
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(MQTT_TAG, "MQTT Connected");
+            esp_mqtt_client_subscribe(mqtt_client, MQTT_TOPIC_PAIRING, 0);
             bt_connect_to_android();
             break;
         case MQTT_EVENT_DISCONNECTED:
@@ -102,6 +103,15 @@ static void mqtt_event_handler(void* event_handler_arg, esp_event_base_t event_b
             break;
         case MQTT_EVENT_DATA:
             ESP_LOGI(MQTT_TAG, "Received data: %.*s", event->data_len, event->data);
+            if (strncmp(event->topic, MQTT_TOPIC_PAIRING, event->topic_len) == 0) {
+                if (strncmp(event->data, "start", event->data_len) == 0) {
+                    ESP_LOGE(MQTT_TAG, "Enabling Bluetooth pairing mode");
+                    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+                } else if (strncmp(event->data, "stop", event->data_len) == 0) {
+                    ESP_LOGE(MQTT_TAG, "Disabling Bluetooth pairing mode");
+                    esp_bt_gap_set_scan_mode(ESP_BT_NON_CONNECTABLE, ESP_BT_NON_DISCOVERABLE);
+                }            
+            }
             break;
         case MQTT_EVENT_ERROR:
             ESP_LOGE(MQTT_TAG, "Error occurred: %s", esp_err_to_name(event->error_handle->connect_return_code));
@@ -188,7 +198,7 @@ esp_err_t wifi_init_sta(void) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "Wi-Fi init finished");
+    ESP_LOGI(TAG_WIFI, "Wi-Fi init finished");
     return ESP_OK;
 }
 
