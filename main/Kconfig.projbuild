@@ -1,4 +1,4 @@
-menu "SPP Example Configuration"
+menu "BT_DOOR_KEY Configuration"
     config EXAMPLE_SSP_ENABLED
         bool "Secure Simple Pairing"
         depends on BT_CLASSIC_ENABLED
@@ -12,4 +12,39 @@ menu "SPP Example Configuration"
         default "ESP_SPP_ACCEPTOR"
         help
             Use this option to set local device name.
+
+    config MQTT_ENABLED
+        bool "Enable MQTT support"
+        default y
+        help
+            Enable or disable MQTT functionality in the firmware.            
+    config MQTT_BROKER_URL
+        string "MQTT Broker URL"
+        default "mqtt://broker.hivemq.com"
+        help
+            Specify the URL of the MQTT broker to connect to.
+
+    config MQTT_CLIENT_ID
+        string "MQTT Client ID"
+        default "ESP32_Client"
+        help
+            Set the MQTT client ID for the device.
+
+    config MQTT_USERNAME
+        string "MQTT Username"
+        default ""
+        help
+            Specify the username for MQTT authentication. Leave empty if not required.
+
+    config MQTT_PASSWORD
+        string "MQTT Password"
+        default ""
+        help
+            Specify the password for MQTT authentication. Leave empty if not required.
+
+    config MQTT_KEEP_ALIVE
+        int "MQTT Keep Alive Interval (seconds)"
+        default 60
+        help
+            Set the keep-alive interval for MQTT connections in seconds.
 endmenu

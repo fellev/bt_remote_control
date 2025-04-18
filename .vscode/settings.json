@@ -10,6 +10,18 @@
         "thread": "c",
         "esp_event.h": "c",
         "time.h": "c",
-        "nvs_flash.h": "c"
+        "nvs_flash.h": "c",
+        "esp_bt_defs.h": "c",
+        "nvs_storage.h": "c",
+        "wifi_apps_private.h": "c",
+        "unordered_map": "cpp",
+        "fstream": "cpp",
+        "istream": "cpp",
+        "numeric": "cpp",
+        "ostream": "cpp",
+        "sstream": "cpp",
+        "esp_transport.h": "c",
+        "cstdint": "c",
+        "string.h": "c"
     }
 }
