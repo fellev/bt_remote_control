@@ -18,5 +18,6 @@ void esp_bt_gap_handler(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *para
 void bt_start_scan();
 void bt_send_message(const char *message);
 void bt_initialize(void);
+void bt_periodic_connect(void);
 
 #endif // BT_MANAGER_H

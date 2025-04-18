@@ -50,7 +50,45 @@ static long data_num = 0;
 
 // Define the Bluetooth address of the Android device bc:32:b2:8b:3a:90
 // esp_bd_addr_t android_bd_addr = {0xbc, 0x32, 0xb2, 0x8b, 0x3a, 0x90};  // Felix's S23 Ultra
-esp_bd_addr_t android_bd_addr = {0x4c, 0x2e, 0x5e, 0x43, 0xed, 0x5c};  // Lina's S22 
+// esp_bd_addr_t android_bd_addr = {0x4c, 0x2e, 0x5e, 0x43, 0xed, 0x5c};  // Lina's S22 
+
+static void start_sdp_discovery(const esp_bd_addr_t target_mac_address);
+
+void bt_periodic_connect(void) {
+    static int current_device_index = 0;
+    int32_t device_count = 0;
+    esp_bd_addr_t saved_bd_addr;
+    char saved_device_name[64] = {0};
+    esp_err_t err;
+
+    // Load the number of saved devices from NVS
+    ESP_ERROR_CHECK(load_bt_count(&device_count));
+
+    ESP_LOGI(SPP_TAG, "Number of saved devices: %d", (int)device_count);
+
+    if (device_count == 0) {
+        ESP_LOGW(SPP_TAG, "No saved devices to connect to.");
+        return;
+    }
+
+    // Load the current device's Bluetooth address and name from NVS
+    ESP_ERROR_CHECK(load_bt_device(current_device_index, &saved_bd_addr, saved_device_name, sizeof(saved_device_name)));
+    ESP_LOGI(SPP_TAG, "Attempting periodic connection to device %d: %s [%02X:%02X:%02X:%02X:%02X:%02X]",
+             current_device_index, saved_device_name,
+             saved_bd_addr[0], saved_bd_addr[1], saved_bd_addr[2],
+             saved_bd_addr[3], saved_bd_addr[4], saved_bd_addr[5]);
+
+    // Start SPP discovery to get the SCN for the saved device
+    start_sdp_discovery(saved_bd_addr);
+
+    ESP_LOGI(SPP_TAG, "Number of saved devices: %d", (int)device_count);
+    // Move to the next device in the list
+    if (device_count > 0) {
+        current_device_index = (current_device_index + 1) % (int)device_count;
+    } else {
+        ESP_LOGW(SPP_TAG, "Device count is zero, skipping index update.");
+    }
+}
 
 esp_err_t bt_connect_to_android() {
     int32_t device_count = 0;
@@ -65,7 +103,7 @@ esp_err_t bt_connect_to_android() {
     for (int i = 0; i < device_count ; i++) {
         ESP_LOGI(SPP_TAG, "Attempting to connect to saved device %d...", i);
         // Load each saved device's Bluetooth address and name from NVS
-        ESP_ERROR_CHECK(load_bt_device(i, saved_bd_addr, saved_device_name, sizeof(saved_device_name)));
+        ESP_ERROR_CHECK(load_bt_device(i, &saved_bd_addr, saved_device_name, sizeof(saved_device_name)));
         ESP_LOGI(SPP_TAG, "Connecting to saved device %d: %s [%02X:%02X:%02X:%02X:%02X:%02X]", i, saved_device_name,
                  saved_bd_addr[0], saved_bd_addr[1], saved_bd_addr[2],
                  saved_bd_addr[3], saved_bd_addr[4], saved_bd_addr[5]);
@@ -155,6 +193,7 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
             }
         } else {
             ESP_LOGE(SPP_TAG, "SPP service discovery failed error %d", param->disc_comp.status);
+            bt_periodic_connect();
         }
         break;
     case ESP_SPP_OPEN_EVT:
@@ -170,6 +209,7 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGI(SPP_TAG, "ESP_SPP_CLOSE_EVT status:%d handle:%"PRIu32" close_by_remote:%d", param->close.status,
                  param->close.handle, param->close.async);
         spp_handle = 0; // Reset the handle
+        bt_periodic_connect(); // Attempt to reconnect
         break;
     case ESP_SPP_START_EVT:
         if (param->start.status == ESP_SPP_SUCCESS) {
@@ -737,7 +777,7 @@ void bt_initialize(void) {
 
     bt_app_gap_start_up();
 
-    start_sdp_discovery(android_bd_addr);
+    // start_sdp_discovery(android_bd_addr);
 
     // Start Bluetooth scanning for nearby devices
     // bt_start_scan();

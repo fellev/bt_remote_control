@@ -138,6 +138,9 @@ void app_main(void)
     bt_initialize();
     ESP_LOGI(BT_MAIN_TAG, "Bluetooth initialized");
 
+    bt_periodic_connect();
+    ESP_LOGI(BT_MAIN_TAG, "Periodic connection started");
+
     // while (true) {
     //     if (spp_handle == 0)
     //     {

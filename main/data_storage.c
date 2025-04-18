@@ -76,7 +76,7 @@ esp_err_t save_bt_device(int index, esp_bd_addr_t mac, const char* name) {
     return err;
 }
 
-esp_err_t load_bt_device(int index, esp_bd_addr_t mac, char* name, size_t name_len) {
+esp_err_t load_bt_device(int index, esp_bd_addr_t* mac, char* name, size_t name_len) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_BT_STORAGE, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK) {
@@ -99,17 +99,20 @@ esp_err_t load_bt_device(int index, esp_bd_addr_t mac, char* name, size_t name_l
     }
 
     // Convert MAC string back to esp_bd_addr_t
-    if (sscanf(mac_str, "%02X:%02X:%02X:%02X:%02X:%02X",
-               (unsigned int*)&mac[0], (unsigned int*)&mac[1], (unsigned int*)&mac[2],
-               (unsigned int*)&mac[3], (unsigned int*)&mac[4], (unsigned int*)&mac[5]) != 6) {
-        nvs_close(nvs_handle);
-        return ESP_ERR_INVALID_ARG;
+    for (int i = 0; i < 6; i++) {
+        char byte_str[3] = {mac_str[i * 3], mac_str[i * 3 + 1], '\0'};
+        char* endptr;
+        unsigned long byte = strtoul(byte_str, &endptr, 16);
+        (*mac)[i] = (uint8_t)byte;
     }
 
-    size_t name_len_out = name_len;
-    err = nvs_get_str(nvs_handle, name_key, name, &name_len_out);
-    if (err != ESP_OK) {
-        ESP_LOGI(TAG, "Error loading name: %s", esp_err_to_name(err));
+    // Load the name if provided
+    if (name != NULL) {
+        size_t name_len_out = name_len;
+        err = nvs_get_str(nvs_handle, name_key, name, &name_len_out);
+        if (err != ESP_OK) {
+            ESP_LOGI(TAG, "Error loading name: %s", esp_err_to_name(err));
+        }
     }
 
     nvs_close(nvs_handle);

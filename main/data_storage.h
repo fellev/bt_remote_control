@@ -27,7 +27,7 @@ esp_err_t save_bt_device(int index, esp_bd_addr_t mac, const char* name);
  * @param name_len Length of the output buffer for the device name.
  * @return esp_err_t ESP_OK on success, or an error code on failure.
  */
-esp_err_t load_bt_device(int index, esp_bd_addr_t mac, char* name, size_t name_len);
+esp_err_t load_bt_device(int index, esp_bd_addr_t* mac, char* name, size_t name_len);
 
 /**
  * @brief 
