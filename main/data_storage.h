@@ -152,6 +152,63 @@ esp_err_t update_bt_device_name(esp_bd_addr_t mac, const char* new_name);
  */
 esp_err_t data_storageInitialize(void);
 
+/**
+ * @brief 
+ * 
+ *
+ *
+ * This function retrieves all stored Bluetooth devices from the non-volatile storage (NVS)
+ * and caches their MAC addresses for quick access.
+ * 
+ * @return
+ *     - ESP_OK: If the devices were successfully loaded into the cache.
+ *     - ESP_ERR_NO_MEM: If memory allocation for the cache failed.
+ *     - Other error codes on failure.
+ */
+esp_err_t load_all_bt_devices_to_cache(void);
+
+/**
+ * @brief Retrieves a Bluetooth device's MAC address from the cache by index.
+ *
+ * This function fetches the MAC address of a Bluetooth device from the cache
+ * based on the specified index.
+ *
+ * @param index The index of the Bluetooth device in the cache.
+ * @param mac Output pointer to store the MAC address of the device.
+ * 
+ * @return
+ *     - ESP_OK: If the MAC address was successfully retrieved.
+ *     - ESP_ERR_INVALID_ARG: If the index is out of bounds.
+ *     - ESP_ERR_INVALID_STATE: If the cache is not initialized.
+ *     - Other error codes on failure.
+ */
+esp_err_t get_bt_device_mac_from_cache(int index, esp_bd_addr_t* mac);
+
+/**
+ * @brief Checks if a Bluetooth device with the specified MAC address exists in the cache.
+ *
+ * This function searches the in-memory cache for a Bluetooth device
+ * with the given MAC address. If a match is found, the function
+ * returns true; otherwise, it returns false.
+ *
+ * @param mac_to_check The MAC address of the Bluetooth device to check, represented as an
+ *                     array of 6 bytes (esp_bd_addr_t).
+ * 
+ * @return
+ *     - true: If the Bluetooth device with the specified MAC address exists in the cache.
+ *     - false: If the device does not exist in the cache or if the cache is not initialized.
+ */
+bool is_bt_device_exist_in_cache(esp_bd_addr_t mac_to_check);
+
+/**
+ * @brief Retrieves the count of Bluetooth devices from the cache.
+ *
+ * This function returns the number of Bluetooth devices currently stored in the cache.
+ * 
+ * @return The count of Bluetooth devices in the cache.
+ */
+int32_t get_device_count_cache(void);
+
 #ifdef __cplusplus
 }
 #endif

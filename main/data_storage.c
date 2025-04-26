@@ -20,6 +20,91 @@
 
 static const char* TAG = "NVS_STORAGE";
 
+static esp_bd_addr_t* mac_cache = NULL;
+static int32_t device_count_cache = 0;
+
+int32_t get_device_count_cache(void) {
+    return device_count_cache;
+}
+
+esp_err_t load_all_bt_devices_to_cache(void) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_BT_STORAGE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_get_i32(nvs_handle, BT_COUNT_KEY, &device_count_cache);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "Error loading device count: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Device count cache: %ld", device_count_cache);
+
+    if (device_count_cache <= 0) {
+        ESP_LOGI(TAG, "No devices to load");
+        nvs_close(nvs_handle);
+        return ESP_OK;
+    }
+
+    if (mac_cache != NULL) {
+        free(mac_cache);
+    }
+
+    mac_cache = malloc(device_count_cache * sizeof(esp_bd_addr_t));
+    if (mac_cache == NULL) {
+        ESP_LOGI(TAG, "Failed to allocate memory for MAC cache");
+        nvs_close(nvs_handle);
+        return ESP_ERR_NO_MEM;
+    }
+
+    for (int i = 0; i < device_count_cache; i++) {
+        char mac_key[BT_MAC_PREFIX_KEY_LEN];
+        snprintf(mac_key, sizeof(mac_key), BT_MAC_KEY_PREFIX, i);
+
+        size_t mac_len = sizeof(esp_bd_addr_t);
+        err = nvs_get_blob(nvs_handle, mac_key, mac_cache[i], &mac_len);
+        if (err != ESP_OK) {
+            ESP_LOGI(TAG, "Error loading MAC for index %d: %s", i, esp_err_to_name(err));
+            free(mac_cache);
+            mac_cache = NULL;
+            device_count_cache = 0;
+            nvs_close(nvs_handle);
+            return err;
+        }
+    }
+
+    ESP_LOGI(TAG, "Loaded MAC addresses:");
+    for (int i = 0; i < device_count_cache; i++) {
+        char mac_str[18];
+        snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac_cache[i][0], mac_cache[i][1], mac_cache[i][2],
+                 mac_cache[i][3], mac_cache[i][4], mac_cache[i][5]);
+        ESP_LOGI(TAG, "Device %d: %s", i, mac_str);
+    }
+
+    nvs_close(nvs_handle);
+    return ESP_OK;
+}
+
+esp_err_t get_bt_device_mac_from_cache(int index, esp_bd_addr_t* mac) {
+    if (index < 0 || index >= device_count_cache) {
+        ESP_LOGI(TAG, "Index out of bounds: %d", index);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (mac_cache == NULL) {
+        ESP_LOGI(TAG, "MAC cache is not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    memcpy(mac, mac_cache[index], sizeof(esp_bd_addr_t));
+    return ESP_OK;
+}
+
 esp_err_t data_storageInitialize(void) {
     int32_t dummy_device_count = 0;
 
@@ -147,6 +232,21 @@ esp_err_t load_bt_count(int32_t* count) {
 
     nvs_close(nvs_handle);
     return err;
+}
+
+bool is_bt_device_exist_in_cache(esp_bd_addr_t mac_to_check) {
+    if (mac_cache == NULL) {
+        ESP_LOGI(TAG, "MAC cache is not initialized");
+        return false;
+    }
+
+    for (int i = 0; i < device_count_cache; i++) {
+        if (memcmp(mac_cache[i], mac_to_check, sizeof(esp_bd_addr_t)) == 0) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool is_bt_device_exist(esp_bd_addr_t mac_to_check) {

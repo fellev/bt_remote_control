@@ -76,12 +76,12 @@ void bt_periodic_connect(void) {
     }
 
     // Load the current device's Bluetooth address and name from NVS
-    if (load_bt_device(current_device_index, &saved_bd_addr, saved_device_name, sizeof(saved_device_name)) != ESP_OK) {
+    if (get_bt_device_mac_from_cache(current_device_index, &saved_bd_addr) != ESP_OK) {
         ESP_LOGE(SPP_TAG, "Failed to load Bluetooth device from NVS");
         return;
     }
-    ESP_LOGI(SPP_TAG, "Attempting periodic connection to device %d: %s [%02X:%02X:%02X:%02X:%02X:%02X]",
-             current_device_index, saved_device_name,
+    ESP_LOGI(SPP_TAG, "Attempting periodic connection to device %d: [%02X:%02X:%02X:%02X:%02X:%02X]",
+             current_device_index, 
              saved_bd_addr[0], saved_bd_addr[1], saved_bd_addr[2],
              saved_bd_addr[3], saved_bd_addr[4], saved_bd_addr[5]);
 
@@ -451,15 +451,21 @@ void esp_bt_gap_handler(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *para
             if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
                 ESP_LOGI(SPP_TAG, "authentication success: %s bda:[%s]", param->auth_cmpl.device_name,
                         bda2str(param->auth_cmpl.bda, bda_str, sizeof(bda_str)));
-                if (is_bt_device_exist(param->auth_cmpl.bda) == ESP_OK) {
+                if (is_bt_device_exist_in_cache(param->auth_cmpl.bda) == true) {
                     ESP_LOGI(SPP_TAG, "Device already exists in NVS");
                     if (update_bt_device_name(param->auth_cmpl.bda, (const char*) param->auth_cmpl.device_name) != ESP_OK) {
                         ESP_LOGE(SPP_TAG, "Failed to update device name in NVS");
                     } else {
                         ESP_LOGI(SPP_TAG, "Device name updated in NVS");
                     }
+                    if (load_all_bt_devices_to_cache() != ESP_OK) {
+                        ESP_LOGE(SPP_TAG, "Failed to load all Bluetooth devices to cache");
+                    } else {
+                        ESP_LOGI(SPP_TAG, "All Bluetooth devices loaded to cache successfully");
+                    }                    
                 } else {
                     ESP_LOGI(SPP_TAG, "Device does not exist in NVS");
+                    device_count = get_device_count_cache();
                     if (save_bt_device(device_count, param->auth_cmpl.bda, (const char*) param->auth_cmpl.device_name) != ESP_OK) {
                         ESP_LOGE(SPP_TAG, "Failed to save device to NVS");
                     } else {
@@ -473,6 +479,11 @@ void esp_bt_gap_handler(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *para
                             ESP_LOGE(SPP_TAG, "Failed to save device count to NVS");
                         }
                         ESP_LOGI(SPP_TAG, "Device count saved: %ld", device_count);
+                        if (load_all_bt_devices_to_cache() != ESP_OK) {
+                            ESP_LOGE(SPP_TAG, "Failed to load all Bluetooth devices to cache");
+                        } else {
+                            ESP_LOGI(SPP_TAG, "All Bluetooth devices loaded to cache successfully");
+                        }
                     }
                 }
             } else {
@@ -595,57 +606,6 @@ void bt_send_message(const char *message) {
         ESP_LOGW(SPP_TAG, "No active connection to send data");
     }
 }
-
-// static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
-// {
-//     app_gap_cb_t *p_dev = &m_dev_info;
-//     char bda_str[18];
-//     char uuid_str[37];
-
-//     switch (event) {
-//     case ESP_BT_GAP_DISC_RES_EVT: {
-//         update_device_info(param);
-//         break;
-//     }
-//     case ESP_BT_GAP_DISC_STATE_CHANGED_EVT: {
-//         if (param->disc_st_chg.state == ESP_BT_GAP_DISCOVERY_STOPPED) {
-//             ESP_LOGI(SPP_TAG, "Device discovery stopped.");
-//             if ( (p_dev->state == APP_GAP_STATE_DEVICE_DISCOVER_COMPLETE ||
-//                     p_dev->state == APP_GAP_STATE_DEVICE_DISCOVERING)
-//                     && p_dev->dev_found) {
-//                 p_dev->state = APP_GAP_STATE_SERVICE_DISCOVERING;
-//                 ESP_LOGI(SPP_TAG, "Discover services ...");
-//                 esp_bt_gap_get_remote_services(p_dev->bda);
-//             }
-//         } else if (param->disc_st_chg.state == ESP_BT_GAP_DISCOVERY_STARTED) {
-//             ESP_LOGI(SPP_TAG, "Discovery started.");
-//         }
-//         break;
-//     }
-//     case ESP_BT_GAP_RMT_SRVCS_EVT: {
-//         if (memcmp(param->rmt_srvcs.bda, p_dev->bda, ESP_BD_ADDR_LEN) == 0 &&
-//                 p_dev->state == APP_GAP_STATE_SERVICE_DISCOVERING) {
-//             p_dev->state = APP_GAP_STATE_SERVICE_DISCOVER_COMPLETE;
-//             if (param->rmt_srvcs.stat == ESP_BT_STATUS_SUCCESS) {
-//                 ESP_LOGI(SPP_TAG, "Services for device %s found",  bda2str(p_dev->bda, bda_str, 18));
-//                 for (int i = 0; i < param->rmt_srvcs.num_uuids; i++) {
-//                     esp_bt_uuid_t *u = param->rmt_srvcs.uuid_list + i;
-//                     ESP_LOGI(SPP_TAG, "--%s", uuid2str(u, uuid_str, 37));
-//                 }
-//             } else {
-//                 ESP_LOGI(SPP_TAG, "Services for device %s not found",  bda2str(p_dev->bda, bda_str, 18));
-//             }
-//         }
-//         break;
-//     }
-//     case ESP_BT_GAP_RMT_SRVC_REC_EVT:
-//     default: {
-//         ESP_LOGI(SPP_TAG, "event: %d", event);
-//         break;
-//     }
-//     }
-//     return;
-// }
 
 static void bt_app_gap_init(void)
 {

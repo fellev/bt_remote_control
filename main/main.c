@@ -131,6 +131,9 @@ void app_main(void)
     ESP_ERROR_CHECK(data_storageInitialize());
     ESP_LOGI(BT_MAIN_TAG, "Data storage initialized");
 
+    ESP_ERROR_CHECK(load_all_bt_devices_to_cache());
+    ESP_LOGI(BT_MAIN_TAG, "All Bluetooth devices loaded into cache");
+
     bt_initialize();
     ESP_LOGI(BT_MAIN_TAG, "Bluetooth initialized");
 
