@@ -1,12 +1,14 @@
 #ifndef DATA_STORAGE_H
 #define DATA_STORAGE_H
 
+#if CONFIG_BT_ENABLED
 #include "esp_bt_defs.h" // For esp_bd_addr_t
 #include "esp_err.h"     // For esp_err_t
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
 
 /**
  * @brief 
@@ -154,6 +156,7 @@ esp_err_t data_storageInitialize(void);
 }
 #endif
 
+#endif // CONFIG_BT_ENABLED
 #endif // DATA_STORAGE_H
   
 //   @brief Load the count of Bluetooth devices from NVS.

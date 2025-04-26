@@ -1,6 +1,8 @@
 #ifndef BT_MANAGER_H
 #define BT_MANAGER_H
 
+#if CONFIG_BT_ENABLED
+
 #include "esp_spp_api.h"
 #include "esp_err.h"
 #include "esp_bt.h"
@@ -19,5 +21,7 @@ void bt_start_scan();
 void bt_send_message(const char *message);
 void bt_initialize(void);
 void bt_periodic_connect(void);
+
+#endif // CONFIG_BT_ENABLED
 
 #endif // BT_MANAGER_H

@@ -2,18 +2,22 @@
 #include <string.h>
 #include <esp_log.h>
 #include <esp_err.h>
+
+#if CONFIG_BT_ENABLED
 #include <esp_bt.h>
 #include <esp_bt_main.h>
 #include <esp_bt_device.h>
 #include <esp_spp_api.h>
+#endif // CONFIG_BT_ENABLED
+
 #include <sys/time.h>
 #include "bt_manager.h"
 #include "data_storage.h"
+#include "bt_mqtt_client.h"
 
 #define SPP_TAG "SPP"
 #define SPP_SERVER_NAME "SPP_SERVER"
 #define TARGET_DEVICE_NAME "TargetDeviceName"
-#define ANDROID_SPP_SERVICE_NAME "HomeKeyService"
 
 #ifdef CONFIG_BT_ENABLED
 typedef enum {
@@ -72,7 +76,10 @@ void bt_periodic_connect(void) {
     }
 
     // Load the current device's Bluetooth address and name from NVS
-    ESP_ERROR_CHECK(load_bt_device(current_device_index, &saved_bd_addr, saved_device_name, sizeof(saved_device_name)));
+    if (load_bt_device(current_device_index, &saved_bd_addr, saved_device_name, sizeof(saved_device_name)) != ESP_OK) {
+        ESP_LOGE(SPP_TAG, "Failed to load Bluetooth device from NVS");
+        return;
+    }
     ESP_LOGI(SPP_TAG, "Attempting periodic connection to device %d: %s [%02X:%02X:%02X:%02X:%02X:%02X]",
              current_device_index, saved_device_name,
              saved_bd_addr[0], saved_bd_addr[1], saved_bd_addr[2],
@@ -180,9 +187,9 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
             // Iterate through the discovered SPP servers to find the target service
             for (int i = 0; i < param->disc_comp.scn_num; i++) {
                 // Check if the service name matches the target Android SPP service name
-                if (strcmp(param->disc_comp.service_name[i], ANDROID_SPP_SERVICE_NAME) == 0) {
+                if (strcmp(param->disc_comp.service_name[i], CONFIG_ANDROID_SPP_SERVICE_NAME) == 0) {
                     int scn = param->disc_comp.scn[i];
-                    ESP_LOGI(SPP_TAG, "Found SCN for service %s: %d", ANDROID_SPP_SERVICE_NAME, scn);
+                    ESP_LOGI(SPP_TAG, "Found SCN for service %s: %d", CONFIG_ANDROID_SPP_SERVICE_NAME, scn);
                     ESP_LOGI(SPP_TAG, "Target device MAC address: %02X:%02X:%02X:%02X:%02X:%02X",
                              target_bd_addr[0], target_bd_addr[1], target_bd_addr[2],
                              target_bd_addr[3], target_bd_addr[4], target_bd_addr[5]);
@@ -193,6 +200,8 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
             }
         } else {
             ESP_LOGE(SPP_TAG, "SPP service discovery failed error %d", param->disc_comp.status);
+            // Add a small delay before retrying the next device
+            vTaskDelay(pdMS_TO_TICKS(10));  // 10ms delay            
             bt_periodic_connect();
         }
         break;
@@ -298,37 +307,6 @@ static void extract_device_name(const esp_bt_gap_cb_param_t *param, char *device
         }        
     }
 }
-
-// void esp_bt_gap_rec(esp_bt_gap_cb_param_t *param)
-// {
-//     char device_name[64] = {0};  // Buffer for device name
-//     extract_device_name(param, device_name, sizeof(device_name));
-
-//     if (strlen(device_name) > 0) {
-//         ESP_LOGI(SPP_TAG, "Discovered device: %s", device_name);
-
-//         // Check if the discovered device matches the target Android phone
-//         if (strcmp(device_name, TARGET_DEVICE_NAME) == 0) {
-//             // Save Bluetooth address
-//             esp_bd_addr_t target_bd_addr;
-//             memcpy(target_bd_addr, param->disc_res.bda, sizeof(esp_bd_addr_t));
-//             ESP_LOGI(SPP_TAG, "Found target device: %s", TARGET_DEVICE_NAME);
-
-//             // Connect to the target device using SPP
-//             esp_err_t err = esp_spp_connect(ESP_SPP_SEC_AUTHENTICATE,  // Security: Authenticate
-//                                             ESP_SPP_ROLE_MASTER,      // Role: Master
-//                                             1,                        // Server channel number (set to 1 by default; adjust as needed)
-//                                             target_bd_addr);
-//             if (err != ESP_OK) {
-//                 ESP_LOGE(SPP_TAG, "Failed to initiate connection: %s", esp_err_to_name(err));
-//             }
-//         }
-//     } else {
-//         ESP_LOGI(SPP_TAG, "Discovered unnamed device, address: %02X:%02X:%02X:%02X:%02X:%02X",
-//                  param->disc_res.bda[0], param->disc_res.bda[1], param->disc_res.bda[2],
-//                  param->disc_res.bda[3], param->disc_res.bda[4], param->disc_res.bda[5]);
-//     }
-// }
 
 static char *uuid2str(esp_bt_uuid_t *uuid, char *str, size_t size)
 {
@@ -473,25 +451,30 @@ void esp_bt_gap_handler(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *para
             if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
                 ESP_LOGI(SPP_TAG, "authentication success: %s bda:[%s]", param->auth_cmpl.device_name,
                         bda2str(param->auth_cmpl.bda, bda_str, sizeof(bda_str)));
-                // ESP_LOGI(SPP_TAG, "key type: %d", param->auth_cmpl.lk_type);
-                ESP_ERROR_CHECK(load_bt_count(&device_count));
-                ESP_LOGI(SPP_TAG, "Current Device count: %ld", device_count);
-                if (is_bt_device_exist(param->auth_cmpl.bda)) {
+                if (is_bt_device_exist(param->auth_cmpl.bda) == ESP_OK) {
                     ESP_LOGI(SPP_TAG, "Device already exists in NVS");
-                    ESP_ERROR_CHECK(update_bt_device_name(param->auth_cmpl.bda, (const char*) param->auth_cmpl.device_name));
-                    ESP_LOGI(SPP_TAG, "Device name updated in NVS");
+                    if (update_bt_device_name(param->auth_cmpl.bda, (const char*) param->auth_cmpl.device_name) != ESP_OK) {
+                        ESP_LOGE(SPP_TAG, "Failed to update device name in NVS");
+                    } else {
+                        ESP_LOGI(SPP_TAG, "Device name updated in NVS");
+                    }
                 } else {
                     ESP_LOGI(SPP_TAG, "Device does not exist in NVS");
-                    ESP_ERROR_CHECK(save_bt_device(device_count, param->auth_cmpl.bda, (const char*) param->auth_cmpl.device_name));
-                    ESP_LOGI(SPP_TAG, "Device count: %ld", device_count);
-                    ESP_LOGI(SPP_TAG, "Device name: %s", param->auth_cmpl.device_name);
-                    ESP_LOGI(SPP_TAG, "Device address: %02X:%02X:%02X:%02X:%02X:%02X",
-                            param->auth_cmpl.bda[0], param->auth_cmpl.bda[1], param->auth_cmpl.bda[2],
-                            param->auth_cmpl.bda[3], param->auth_cmpl.bda[4], param->auth_cmpl.bda[5]);
-                    device_count++;
-                    ESP_ERROR_CHECK(save_bt_count(device_count));
+                    if (save_bt_device(device_count, param->auth_cmpl.bda, (const char*) param->auth_cmpl.device_name) != ESP_OK) {
+                        ESP_LOGE(SPP_TAG, "Failed to save device to NVS");
+                    } else {
+                        ESP_LOGI(SPP_TAG, "Device count: %ld", device_count);
+                        ESP_LOGI(SPP_TAG, "Device name: %s", param->auth_cmpl.device_name);
+                        ESP_LOGI(SPP_TAG, "Device address: %02X:%02X:%02X:%02X:%02X:%02X",
+                                param->auth_cmpl.bda[0], param->auth_cmpl.bda[1], param->auth_cmpl.bda[2],
+                                param->auth_cmpl.bda[3], param->auth_cmpl.bda[4], param->auth_cmpl.bda[5]);
+                        device_count++;
+                        if (save_bt_count(device_count) != ESP_OK) {
+                            ESP_LOGE(SPP_TAG, "Failed to save device count to NVS");
+                        }
+                        ESP_LOGI(SPP_TAG, "Device count saved: %ld", device_count);
+                    }
                 }
-                ESP_LOGI(SPP_TAG, "Device count saved: %ld", device_count);
             } else {
                 ESP_LOGE(SPP_TAG, "authentication failed, status:%d", param->auth_cmpl.stat);
             }

@@ -47,4 +47,16 @@ menu "BT_DOOR_KEY Configuration"
         default 60
         help
             Set the keep-alive interval for MQTT connections in seconds.
+
+    config ANDROID_SPP_SERVICE_NAME
+        string "Android SPP Service Name"
+        default "HomeKeyService"
+        help
+            Set the name of the Android SPP service.
+            
+    config WIFI_ENABLED
+        bool "Enable WiFi support"
+        default y
+        help
+            Enable or disable WiFi functionality in the firmware.
 endmenu

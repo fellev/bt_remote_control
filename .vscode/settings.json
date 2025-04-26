@@ -22,6 +22,8 @@
         "sstream": "cpp",
         "esp_transport.h": "c",
         "cstdint": "c",
-        "string.h": "c"
+        "string.h": "c",
+        "esp_err.h": "c",
+        "bt_mqtt_client.h": "c"
     }
 }

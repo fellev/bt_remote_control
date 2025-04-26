@@ -52,10 +52,7 @@
 #define WIFI_PASS "Barbur18bet"
 
 
-#define CONFIG_WIFI_ENABLED 0
-
-
-static const char *TAG_WIFI = "WIFI";
+#define TAG_WIFI "WIFI"
 
 //************** WIFI related code start **************/
 #if CONFIG_WIFI_ENABLED
@@ -129,11 +126,10 @@ void app_main(void)
     //          dummy_name,
     //          dummy_mac[0], dummy_mac[1], dummy_mac[2],
     //          dummy_mac[3], dummy_mac[4], dummy_mac[5]);
+    #if CONFIG_BT_ENABLED
 
     ESP_ERROR_CHECK(data_storageInitialize());
     ESP_LOGI(BT_MAIN_TAG, "Data storage initialized");
-
-#if CONFIG_BT_ENABLED
 
     bt_initialize();
     ESP_LOGI(BT_MAIN_TAG, "Bluetooth initialized");

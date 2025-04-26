@@ -1,9 +1,15 @@
+
+#include "sdkconfig.h"
+
+#ifdef CONFIG_BT_ENABLED
+
 #include "data_storage.h" // For data storage functions
 #include "esp_bt_defs.h" // For esp_bd_addr_t
 #include "esp_log.h"     // For ESP_LOGI
 #include "nvs_flash.h"   // For NVS functions
 #include "nvs.h"         // For NVS handle and operations
 #include <string.h>      // For strncmp
+
 
 #define BT_COUNT_KEY "bt_count"
 #define BT_MAC_KEY_PREFIX "bt_%d_mac"
@@ -53,11 +59,7 @@ esp_err_t save_bt_device(int index, esp_bd_addr_t mac, const char* name) {
     snprintf(mac_key, sizeof(mac_key), BT_MAC_KEY_PREFIX, index);
     snprintf(name_key, sizeof(name_key), BT_NAME_KEY_PREFIX, index);
 
-    char mac_str[18]; // MAC address as a string (e.g., "AA:BB:CC:DD:EE:FF")
-    snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
-    err = nvs_set_str(nvs_handle, mac_key, mac_str);
+    err = nvs_set_blob(nvs_handle, mac_key, mac, sizeof(esp_bd_addr_t));
     if (err != ESP_OK) {
         ESP_LOGI(TAG, "Error saving MAC: %s", esp_err_to_name(err));
         nvs_close(nvs_handle);
@@ -89,21 +91,12 @@ esp_err_t load_bt_device(int index, esp_bd_addr_t* mac, char* name, size_t name_
     snprintf(mac_key, sizeof(mac_key), BT_MAC_KEY_PREFIX, index);
     snprintf(name_key, sizeof(name_key), BT_NAME_KEY_PREFIX, index);
 
-    char mac_str[18];
-    size_t mac_str_len = sizeof(mac_str);
-    err = nvs_get_str(nvs_handle, mac_key, mac_str, &mac_str_len);
+    size_t mac_len = sizeof(esp_bd_addr_t);
+    err = nvs_get_blob(nvs_handle, mac_key, mac, &mac_len);
     if (err != ESP_OK) {
-        ESP_LOGI(TAG, "Error loading MAC: %s", esp_err_to_name(err));
+        ESP_LOGI(TAG, "Error loading MAC as binary: %s", esp_err_to_name(err));
         nvs_close(nvs_handle);
         return err;
-    }
-
-    // Convert MAC string back to esp_bd_addr_t
-    for (int i = 0; i < 6; i++) {
-        char byte_str[3] = {mac_str[i * 3], mac_str[i * 3 + 1], '\0'};
-        char* endptr;
-        unsigned long byte = strtoul(byte_str, &endptr, 16);
-        (*mac)[i] = (uint8_t)byte;
     }
 
     // Load the name if provided
@@ -156,12 +149,13 @@ esp_err_t load_bt_count(int32_t* count) {
     return err;
 }
 
-bool is_bt_device_exist(esp_bd_addr_t mac) {
+bool is_bt_device_exist(esp_bd_addr_t mac_to_check) {
     nvs_handle_t nvs_handle;
+    esp_bd_addr_t mac;
     esp_err_t err = nvs_open(NVS_BT_STORAGE, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK) {
         ESP_LOGI(TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
-        ESP_ERROR_CHECK(err);
+        return false;
     }
 
     int32_t count = 0;
@@ -173,18 +167,19 @@ bool is_bt_device_exist(esp_bd_addr_t mac) {
     }
 
     char mac_key[BT_MAC_PREFIX_KEY_LEN];
-    char mac_str[18];
-    char mac_to_check[18];
-    snprintf(mac_to_check, sizeof(mac_to_check), "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
     for (int i = 0; i < count; i++) {
         snprintf(mac_key, sizeof(mac_key), BT_MAC_KEY_PREFIX, i);
-        size_t mac_str_len = sizeof(mac_str);
-        err = nvs_get_str(nvs_handle, mac_key, mac_str, &mac_str_len);
-        if (err == ESP_OK && strncmp(mac_str, mac_to_check, sizeof(mac_str)) == 0) {
-            nvs_close(nvs_handle);
-            return true;
+
+        size_t mac_len = sizeof(esp_bd_addr_t);
+        err = nvs_get_blob(nvs_handle, mac_key, mac, &mac_len);
+        if (err == ESP_OK) {
+            if (mac_len == sizeof(esp_bd_addr_t) && memcmp(mac, mac_to_check, mac_len) == 0) {
+                nvs_close(nvs_handle);
+                return true;
+            }
+        } else {
+            ESP_LOGI(TAG, "Error reading MAC for index %d: %s", i, esp_err_to_name(err));
         }
     }
 
@@ -225,8 +220,9 @@ esp_err_t delete_all_bt_devices(void) {
     return err;
 }
 
-esp_err_t delete_bt_device(esp_bd_addr_t mac) {
+esp_err_t delete_bt_device(esp_bd_addr_t mac_to_check) {
     nvs_handle_t nvs_handle;
+    esp_bd_addr_t mac;
     esp_err_t err = nvs_open(NVS_BT_STORAGE, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK) {
         ESP_LOGI(TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
@@ -241,18 +237,13 @@ esp_err_t delete_bt_device(esp_bd_addr_t mac) {
         return err == ESP_ERR_NVS_NOT_FOUND ? ESP_ERR_NVS_NOT_FOUND : err;
     }
 
-    char mac_to_check[18];
-    snprintf(mac_to_check, sizeof(mac_to_check), "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
     for (int i = 0; i < count; i++) {
         char mac_key[BT_MAC_PREFIX_KEY_LEN];
-        char mac_str[18];
         snprintf(mac_key, sizeof(mac_key), BT_MAC_KEY_PREFIX, i);
 
-        size_t mac_str_len = sizeof(mac_str);
-        err = nvs_get_str(nvs_handle, mac_key, mac_str, &mac_str_len);
-        if (err == ESP_OK && strcmp(mac_str, mac_to_check) == 0) {
+        size_t mac_len = sizeof(esp_bd_addr_t);
+        err = nvs_get_blob(nvs_handle, mac_key, mac, &mac_len);
+        if (err == ESP_OK && memcmp(mac, mac_to_check, mac_len) == 0) {
             char name_key[BT_NAME_KEY_LEN];
             snprintf(name_key, sizeof(name_key), BT_NAME_KEY_PREFIX, i);
 
@@ -351,19 +342,15 @@ esp_err_t update_bt_device_name(esp_bd_addr_t mac, const char* new_name) {
         return err == ESP_ERR_NVS_NOT_FOUND ? ESP_ERR_NVS_NOT_FOUND : err;
     }
 
-    char mac_to_check[18];
-    snprintf(mac_to_check, sizeof(mac_to_check), "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
     for (int i = 0; i < count; i++) {
         char mac_key[BT_MAC_PREFIX_KEY_LEN];
         char name_key[BT_NAME_KEY_LEN];
-        char mac_str[18];
+        esp_bd_addr_t stored_mac;
         snprintf(mac_key, sizeof(mac_key), BT_MAC_KEY_PREFIX, i);
 
-        size_t mac_str_len = sizeof(mac_str);
-        err = nvs_get_str(nvs_handle, mac_key, mac_str, &mac_str_len);
-        if (err == ESP_OK && strcmp(mac_str, mac_to_check) == 0) {
+        size_t mac_len = sizeof(esp_bd_addr_t);
+        err = nvs_get_blob(nvs_handle, mac_key, stored_mac, &mac_len);
+        if (err == ESP_OK && mac_len == sizeof(esp_bd_addr_t) && memcmp(stored_mac, mac, mac_len) == 0) {
             snprintf(name_key, sizeof(name_key), BT_NAME_KEY_PREFIX, i);
 
             err = nvs_set_str(nvs_handle, name_key, new_name);
@@ -382,3 +369,5 @@ esp_err_t update_bt_device_name(esp_bd_addr_t mac, const char* new_name) {
     nvs_close(nvs_handle);
     return ESP_ERR_NVS_NOT_FOUND;
 }
+
+#endif // CONFIG_BT_ENABLED
