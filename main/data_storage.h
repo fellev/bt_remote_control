@@ -3,13 +3,35 @@
 
 #if CONFIG_BT_ENABLED
 #include "esp_bt_defs.h" // For esp_bd_addr_t
+#endif // CONFIG_BT_ENABLED
+
 #include "esp_err.h"     // For esp_err_t
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/**
+ * @brief Initializes the data storage system.
+ *
+ * This function sets up the non-volatile storage (NVS) for storing Bluetooth device data.
+ * It must be called before using any other functions in this module.
+ * 
+ * @return
+ *     - ESP_OK: If the initialization was successful.
+ *     - Other error codes on failure.
+ */
+esp_err_t data_storageInitialize(void);
 
+/**
+ * @brief 
+ *
+ * @param count Number of Bluetooth devices.
+ * @return esp_err_t ESP_OK on success, or an error code on failure.
+ */
+esp_err_t save_bt_count(int32_t count);
+
+#if CONFIG_BT_ENABLED
 /**
  * @brief 
  *
@@ -30,14 +52,6 @@ esp_err_t save_bt_device(int index, esp_bd_addr_t mac, const char* name);
  * @return esp_err_t ESP_OK on success, or an error code on failure.
  */
 esp_err_t load_bt_device(int index, esp_bd_addr_t* mac, char* name, size_t name_len);
-
-/**
- * @brief 
- *
- * @param count Number of Bluetooth devices.
- * @return esp_err_t ESP_OK on success, or an error code on failure.
- */
-esp_err_t save_bt_count(int32_t count);
 
 /**
  * @brief 
@@ -140,17 +154,6 @@ esp_err_t delete_bt_device_by_name(const char* name);
  */
 esp_err_t update_bt_device_name(esp_bd_addr_t mac, const char* new_name);
 
-/**
- * @brief Initializes the data storage system.
- *
- * This function sets up the non-volatile storage (NVS) for storing Bluetooth device data.
- * It must be called before using any other functions in this module.
- * 
- * @return
- *     - ESP_OK: If the initialization was successful.
- *     - Other error codes on failure.
- */
-esp_err_t data_storageInitialize(void);
 
 /**
  * @brief 
@@ -209,11 +212,30 @@ bool is_bt_device_exist_in_cache(esp_bd_addr_t mac_to_check);
  */
 int32_t get_device_count_cache(void);
 
+/**
+ * @brief Retrieves a comma-separated list of paired Bluetooth device MAC addresses from the cache.
+ *
+ * This function generates a string containing the MAC addresses of all paired Bluetooth devices
+ * stored in the cache, separated by commas. The provided buffer must be large enough to hold
+ * the resulting string.
+ *
+ * @param device_mac_list Output buffer to store the comma-separated MAC addresses.
+ * @param list_len Length of the output buffer.
+ * 
+ * @return
+ *     - ESP_OK: If the MAC addresses were successfully retrieved.
+ *     - ESP_ERR_INVALID_STATE: If the cache is not initialized.
+ *     - ESP_ERR_INVALID_SIZE: If the provided buffer is too small.
+ */
+esp_err_t get_paired_mac_list_from_cache(char* device_mac_list, size_t list_len);
+
+#endif // CONFIG_BT_ENABLED
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif // CONFIG_BT_ENABLED
+
 #endif // DATA_STORAGE_H
   
 //   @brief Load the count of Bluetooth devices from NVS.

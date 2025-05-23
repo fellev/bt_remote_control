@@ -126,11 +126,13 @@ void app_main(void)
     //          dummy_name,
     //          dummy_mac[0], dummy_mac[1], dummy_mac[2],
     //          dummy_mac[3], dummy_mac[4], dummy_mac[5]);
-    #if CONFIG_BT_ENABLED
 
+#ifdef CONFIG_NVS_ENABLE
     ESP_ERROR_CHECK(data_storageInitialize());
     ESP_LOGI(BT_MAIN_TAG, "Data storage initialized");
+#endif // CONFIG_NVS_ENABLE
 
+#if CONFIG_BT_ENABLED
     ESP_ERROR_CHECK(load_all_bt_devices_to_cache());
     ESP_LOGI(BT_MAIN_TAG, "All Bluetooth devices loaded into cache");
 

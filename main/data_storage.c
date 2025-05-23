@@ -1,10 +1,13 @@
 
 #include "sdkconfig.h"
 
+#ifdef CONFIG_NVS_ENABLE
+
 #ifdef CONFIG_BT_ENABLED
+#include "esp_bt_defs.h" // For esp_bd_addr_t
+#endif // CONFIG_BT_ENABLED
 
 #include "data_storage.h" // For data storage functions
-#include "esp_bt_defs.h" // For esp_bd_addr_t
 #include "esp_log.h"     // For ESP_LOGI
 #include "nvs_flash.h"   // For NVS functions
 #include "nvs.h"         // For NVS handle and operations
@@ -20,12 +23,79 @@
 
 static const char* TAG = "NVS_STORAGE";
 
+#ifdef CONFIG_BT_ENABLED
 static esp_bd_addr_t* mac_cache = NULL;
+#endif // CONFIG_BT_ENABLED
+
 static int32_t device_count_cache = 0;
+
+
+esp_err_t load_bt_count(int32_t* count) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_BT_STORAGE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_get_i32(nvs_handle, BT_COUNT_KEY, count);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "Error loading count: %s", esp_err_to_name(err));
+    }
+
+    nvs_close(nvs_handle);
+    return err;
+}
+
+esp_err_t save_bt_count(int32_t count) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_BT_STORAGE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_i32(nvs_handle, BT_COUNT_KEY, count);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "Error saving count: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    err = nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+    return err;
+}
+
+esp_err_t data_storageInitialize(void) {
+    int32_t dummy_device_count = 0;
+
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGI(TAG, "NVS flash init failed: %s", esp_err_to_name(err));
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+        ESP_LOGI(TAG, "NVS flash reinit status: %s", esp_err_to_name(err));
+    }
+    ESP_ERROR_CHECK(err);
+
+    if (load_bt_count(&dummy_device_count) != ESP_OK) {
+        ESP_LOGI(TAG, "Failed to load device count, initializing to 0");
+        dummy_device_count = 0;
+        ESP_ERROR_CHECK(save_bt_count(dummy_device_count));
+    } else {
+        ESP_LOGI(TAG, "Loaded device count: %ld", dummy_device_count);
+    }
+    ESP_LOGI(TAG, "Data storage initialized");
+    return ESP_OK;
+}
+
 
 int32_t get_device_count_cache(void) {
     return device_count_cache;
 }
+
+#ifdef CONFIG_BT_ENABLED
 
 esp_err_t load_all_bt_devices_to_cache(void) {
     nvs_handle_t nvs_handle;
@@ -105,29 +175,6 @@ esp_err_t get_bt_device_mac_from_cache(int index, esp_bd_addr_t* mac) {
     return ESP_OK;
 }
 
-esp_err_t data_storageInitialize(void) {
-    int32_t dummy_device_count = 0;
-
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGI(TAG, "NVS flash init failed: %s", esp_err_to_name(err));
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-        ESP_LOGI(TAG, "NVS flash reinit status: %s", esp_err_to_name(err));
-    }
-    ESP_ERROR_CHECK(err);
-
-    if (load_bt_count(&dummy_device_count) != ESP_OK) {
-        ESP_LOGI(TAG, "Failed to load device count, initializing to 0");
-        dummy_device_count = 0;
-        ESP_ERROR_CHECK(save_bt_count(dummy_device_count));
-    } else {
-        ESP_LOGI(TAG, "Loaded device count: %ld", dummy_device_count);
-    }
-    ESP_LOGI(TAG, "Data storage initialized");
-    return ESP_OK;
-}
-
 esp_err_t save_bt_device(int index, esp_bd_addr_t mac, const char* name) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_BT_STORAGE, NVS_READWRITE, &nvs_handle);
@@ -191,43 +238,6 @@ esp_err_t load_bt_device(int index, esp_bd_addr_t* mac, char* name, size_t name_
         if (err != ESP_OK) {
             ESP_LOGI(TAG, "Error loading name: %s", esp_err_to_name(err));
         }
-    }
-
-    nvs_close(nvs_handle);
-    return err;
-}
-
-esp_err_t save_bt_count(int32_t count) {
-    nvs_handle_t nvs_handle;
-    esp_err_t err = nvs_open(NVS_BT_STORAGE, NVS_READWRITE, &nvs_handle);
-    if (err != ESP_OK) {
-        ESP_LOGI(TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    err = nvs_set_i32(nvs_handle, BT_COUNT_KEY, count);
-    if (err != ESP_OK) {
-        ESP_LOGI(TAG, "Error saving count: %s", esp_err_to_name(err));
-        nvs_close(nvs_handle);
-        return err;
-    }
-
-    err = nvs_commit(nvs_handle);
-    nvs_close(nvs_handle);
-    return err;
-}
-
-esp_err_t load_bt_count(int32_t* count) {
-    nvs_handle_t nvs_handle;
-    esp_err_t err = nvs_open(NVS_BT_STORAGE, NVS_READONLY, &nvs_handle);
-    if (err != ESP_OK) {
-        ESP_LOGI(TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    err = nvs_get_i32(nvs_handle, BT_COUNT_KEY, count);
-    if (err != ESP_OK) {
-        ESP_LOGI(TAG, "Error loading count: %s", esp_err_to_name(err));
     }
 
     nvs_close(nvs_handle);
@@ -470,4 +480,37 @@ esp_err_t update_bt_device_name(esp_bd_addr_t mac, const char* new_name) {
     return ESP_ERR_NVS_NOT_FOUND;
 }
 
+esp_err_t get_paired_mac_list_from_cache(char* device_mac_list, size_t list_len) {
+    if (mac_cache == NULL) {
+        ESP_LOGI(TAG, "MAC cache is not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    size_t required_len = device_count_cache * 18; // Each MAC address is 17 chars + 1 for ','
+    if (list_len < required_len) {
+        ESP_LOGI(TAG, "Provided buffer is too small. Required: %zu, Provided: %zu", required_len, list_len);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    char* ptr = device_mac_list;
+    for (int i = 0; i < device_count_cache; i++) {
+        for (int j = 0; j < 6; j++) {
+            if (mac_cache[i][j] < 16) {
+                *ptr++ = '0';
+            }
+            int high_nibble = (mac_cache[i][j] >> 4) & 0xF;
+            int low_nibble = mac_cache[i][j] & 0xF;
+            *ptr++ = "0123456789ABCDEF"[high_nibble];
+            *ptr++ = "0123456789ABCDEF"[low_nibble];
+            if (j < 5) {
+                *ptr++ = ':';
+            }
+        }
+        *ptr++ = ',';
+    }
+
+    return ESP_OK;
+}
+
 #endif // CONFIG_BT_ENABLED
+#endif // CONFIG_NVS_ENABLE

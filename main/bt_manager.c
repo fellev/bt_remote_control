@@ -58,6 +58,64 @@ static long data_num = 0;
 
 static void start_sdp_discovery(const esp_bd_addr_t target_mac_address);
 
+esp_err_t bt_disconnect_from_android(void) {
+    if (spp_handle != 0) { // Ensure there is an active connection
+        esp_err_t err = esp_spp_disconnect(spp_handle);
+        if (err == ESP_OK) {
+            ESP_LOGI(SPP_TAG, "Disconnection initiated successfully.");
+        } else {
+            ESP_LOGE(SPP_TAG, "Failed to initiate disconnection: %s", esp_err_to_name(err));
+        }
+        return err;
+    } else {
+        ESP_LOGW(SPP_TAG, "No active connection to disconnect.");
+        return ESP_ERR_INVALID_STATE;
+    }
+}
+
+void bt_reset_device(void) {
+    ESP_LOGI(SPP_TAG, "Resetting Bluetooth device...");
+    if (spp_handle != 0) {
+        esp_err_t err = esp_spp_disconnect(spp_handle);
+        if (err == ESP_OK) {
+            ESP_LOGI(SPP_TAG, "Disconnected successfully before reset.");
+        } else {
+            ESP_LOGE(SPP_TAG, "Failed to disconnect before reset: %s", esp_err_to_name(err));
+        }
+    }
+
+    esp_err_t ret = esp_bluedroid_disable();
+    if (ret == ESP_OK) {
+        ESP_LOGI(SPP_TAG, "Bluedroid disabled successfully.");
+    } else {
+        ESP_LOGE(SPP_TAG, "Failed to disable Bluedroid: %s", esp_err_to_name(ret));
+    }
+
+    ret = esp_bluedroid_deinit();
+    if (ret == ESP_OK) {
+        ESP_LOGI(SPP_TAG, "Bluedroid deinitialized successfully.");
+    } else {
+        ESP_LOGE(SPP_TAG, "Failed to deinitialize Bluedroid: %s", esp_err_to_name(ret));
+    }
+
+    ret = esp_bt_controller_disable();
+    if (ret == ESP_OK) {
+        ESP_LOGI(SPP_TAG, "Bluetooth controller disabled successfully.");
+    } else {
+        ESP_LOGE(SPP_TAG, "Failed to disable Bluetooth controller: %s", esp_err_to_name(ret));
+    }
+
+    ret = esp_bt_controller_deinit();
+    if (ret == ESP_OK) {
+        ESP_LOGI(SPP_TAG, "Bluetooth controller deinitialized successfully.");
+    } else {
+        ESP_LOGE(SPP_TAG, "Failed to deinitialize Bluetooth controller: %s", esp_err_to_name(ret));
+    }
+
+    ESP_LOGI(SPP_TAG, "Reinitializing Bluetooth...");
+    bt_initialize();
+}
+
 void bt_periodic_connect(void) {
     static int current_device_index = 0;
     int32_t device_count = 0;
@@ -66,13 +124,17 @@ void bt_periodic_connect(void) {
     esp_err_t err;
 
     // Load the number of saved devices from NVS
-    ESP_ERROR_CHECK(load_bt_count(&device_count));
+    ESP_ERROR_CHECK(device_count = get_device_count_cache());
 
     ESP_LOGI(SPP_TAG, "Number of saved devices: %d", (int)device_count);
 
     if (device_count == 0) {
         ESP_LOGW(SPP_TAG, "No saved devices to connect to.");
         return;
+    }
+
+    if (current_device_index >= device_count) {
+        current_device_index = 0; // Reset index if it exceeds the count
     }
 
     // Load the current device's Bluetooth address and name from NVS
@@ -626,6 +688,12 @@ static void start_sdp_discovery(const esp_bd_addr_t target_mac_address) {
              target_mac_address[3], target_mac_address[4], target_mac_address[5]);
     memcpy(target_bd_addr, target_mac_address, sizeof(esp_bd_addr_t));
     start_spp_discovery(target_bd_addr);
+}
+
+void stop_sdp_discovery(void) {
+    ESP_LOGI(SPP_TAG, "Stopping SDP discovery...");
+    esp_bt_gap_cancel_discovery();
+    memset(target_bd_addr, 0, sizeof(esp_bd_addr_t)); // Clear the target Bluetooth address
 }
 
 static void bt_app_gap_start_up(void)
