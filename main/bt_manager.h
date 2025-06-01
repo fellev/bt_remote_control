@@ -88,6 +88,26 @@ void bt_disconnect_from_android(void);
  */
 void bt_reset_device(void);
 
+/**
+ * @brief 
+ * 
+ * @param enabled Set to true to enable, false to disable.
+ */
+void bt_set_periodic_connect_enabled(bool enabled);
+
+
+/**
+ * @brief Get the current state of periodic Bluetooth connection attempts.
+ * 
+ * @return true if enabled, false otherwise.
+ */
+bool bt_get_periodic_connect_enabled(void);
+
+/**
+ * @brief Attempt to connect periodically if periodic connect is enabled.
+ */
+void bt_try_periodic_connect(void);
+
 
 #endif // CONFIG_BT_ENABLED
 

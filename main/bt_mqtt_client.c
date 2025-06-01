@@ -10,6 +10,8 @@
 #include "bt_mqtt_client.h"
 #include "bt_manager.h"
 #include "esp_log.h"
+#include "data_storage.h"
+
 
 #define MQTT_TOPIC_PAIRING "cmd/bt_door_key/pairing"
 #define SPP_TAG "BT_DOOR_KEY"
@@ -35,6 +37,9 @@
 #define CMD_DISCONNECT_ANDROID      "disconnect_android"
 #define CMD_LIST_PAIRED_DEVICES     "list_paired_devices"
 #define CMD_BLUETOOTH_PAIRING_MODE  "bluetooth_pairing_mode"
+#define CMD_CONNECTED_PHONE_MAC     "connected_phone_mac"
+
+
 #define HA_RECEIVED_TOPIC_PREFIX    "bt_door_key/cmd/"
 
 #if CONFIG_MQTT_ENABLED
@@ -104,12 +109,56 @@ static void publish_bt_door_key_entities(esp_mqtt_client_handle_t client) {
         { HA_BUTTON_TOPIC"/%s/config", HA_BUTTON, "Stop SDP Discovery", CMD_STOP_SDP_DISCOVERY, NULL },
         { HA_BUTTON_TOPIC"/%s/config", HA_BUTTON, "Connect to Android Device", CMD_CONNECT_ANDROID, NULL },
         { HA_BUTTON_TOPIC"/%s/config", HA_BUTTON, "Disconnect from Android Device", CMD_DISCONNECT_ANDROID, NULL },
-        { HA_SENSOR_TOPIC"/%s/config", HA_SENSOR, "List Paired Devices", CMD_LIST_PAIRED_DEVICES, ",\"state_topic\":\"bt_door_key/state/list_paired_devices\"" },
-        { HA_SWITCH_TOPIC"/%s/config", HA_SWITCH, "Bluetooth Pairing Mode", CMD_BLUETOOTH_PAIRING_MODE, ",\"state_topic\":\"bt_door_key/state/bluetooth_pairing_mode\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\"" }
+        { HA_SENSOR_TOPIC"/%s/config", HA_SENSOR, "List Paired Devices", CMD_LIST_PAIRED_DEVICES, ",\"state_topic\":\"bt_door_key/state/" CMD_LIST_PAIRED_DEVICES "\"" },
+        { HA_SWITCH_TOPIC"/%s/config", HA_SWITCH, "Bluetooth Pairing Mode", CMD_BLUETOOTH_PAIRING_MODE, ",\"state_topic\":\"bt_door_key/state/" CMD_BLUETOOTH_PAIRING_MODE "\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\"" },
+        { HA_SENSOR_TOPIC"/%s/config", HA_SENSOR, "Connected Phone MAC", CMD_CONNECTED_PHONE_MAC, ",\"state_topic\":\"bt_door_key/state/" CMD_CONNECTED_PHONE_MAC "\"" }
     };
     for (size_t i = 0; i < sizeof(entities)/sizeof(entities[0]); ++i)
         publish_entity(client, entities[i].topic_fmt, entities[i].type, entities[i].name, entities[i].uid, entities[i].extra);
     publish_paired_devices(client);
+}
+
+static void publish_bt_door_key_state(esp_mqtt_client_handle_t client, const char *uid) {
+    char *topic = malloc(128);
+    char *payload = malloc(64);
+
+    if (topic == NULL || payload == NULL) {
+        ESP_LOGE(MQTT_TAG, "Failed to allocate memory for topic or payload");
+        if (topic) free(topic);
+        if (payload) free(payload);
+        return;
+    }
+
+    snprintf(topic, 128, "bt_door_key/state/%s", uid);
+    snprintf(payload, 64, "{\"state\":\"%s\"}", uid);
+
+    int msg_id = esp_mqtt_client_publish(client, topic, payload, 0, 1, 1);
+    ESP_LOGI(MQTT_TAG, "Published state to %s, msg_id=%d", topic, msg_id);
+
+    free(topic);
+    free(payload);
+}
+
+void publish_connected_phone_mac(uint8_t* addr) {
+    char topic[128];
+    char payload[65];
+
+    snprintf(topic, sizeof(topic), "bt_door_key/state/%s", CMD_CONNECTED_PHONE_MAC);
+
+    if (addr == NULL) {
+        snprintf(payload, sizeof(payload), "{\"" CMD_CONNECTED_PHONE_MAC "\":\"Disconnected\"}");
+    } else {
+        char addr_str[19];
+        snprintf(addr_str, sizeof(addr_str),
+                 "%02X:%02X:%02X:%02X:%02X:%02X",
+                 addr[0], addr[1], addr[2],
+                 addr[3], addr[4], addr[5]);
+        addr_str[18] = '\0'; // Null-terminate the string
+        snprintf(payload, sizeof(payload), "{\"" CMD_CONNECTED_PHONE_MAC "\":\"%s\"}", addr_str);
+    }
+
+    int msg_id = esp_mqtt_client_publish(mqtt_client, topic, payload, 0, 1, 1);
+    ESP_LOGI(MQTT_TAG, "Published Connected Phone MAC to %s, msg_id=%d", topic, msg_id);
 }
 
 static void publish_bt_connected(esp_mqtt_client_handle_t client, const char *uid) {
@@ -171,26 +220,27 @@ static void handle_host_command(const char *topic, int topic_len, const char *da
     if (strcmp(command, CMD_DELETE_PAIRED) == 0) {
         ESP_LOGI(MQTT_TAG, "Deleting all paired devices");
         #if CONFIG_BT_ENABLED
-        bt_delete_paired_devices();
+        delete_all_bt_devices();
         #endif // CONFIG_BT_ENABLED
     } else if (strcmp(command, CMD_RESET_DEVICE) == 0) {
         ESP_LOGI(MQTT_TAG, "Resetting device");
-        #if CONFIG_BT_ENABLED
-        bt_reset_device();
-        #endif // CONFIG_BT_ENABLED
+        esp_restart();
     } else if (strcmp(command, CMD_STOP_SDP_DISCOVERY) == 0) {
         ESP_LOGI(MQTT_TAG, "Stopping SDP discovery");
         #if CONFIG_BT_ENABLED
         stop_sdp_discovery();
+        bt_set_periodic_connect_enabled(false);
         #endif // CONFIG_BT_ENABLED
     } else if (strcmp(command, CMD_CONNECT_ANDROID) == 0) {
         ESP_LOGI(MQTT_TAG, "Connecting to Android device");
         #if CONFIG_BT_ENABLED
-        bt_periodic_connect();
+        bt_set_periodic_connect_enabled(true);
+        bt_try_periodic_connect();
         #endif // CONFIG_BT_ENABLED
     } else if (strcmp(command, CMD_DISCONNECT_ANDROID) == 0) {
         ESP_LOGI(MQTT_TAG, "Disconnecting from Android device");
         #if CONFIG_BT_ENABLED
+        bt_set_periodic_connect_enabled(false);
         bt_disconnect_from_android();
         #endif // CONFIG_BT_ENABLED
     } else if (strcmp(command, CMD_BLUETOOTH_PAIRING_MODE) == 0) {
@@ -299,6 +349,9 @@ static void mqtt_event_handler(void* event_handler_arg, esp_event_base_t event_b
             break;
         case MQTT_EVENT_ERROR:
             ESP_LOGE(MQTT_TAG, "Error occurred: %s", esp_err_to_name(event->error_handle->connect_return_code));
+            if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
+                ESP_LOGE(MQTT_TAG, "Last errno string (%s)", strerror(event->error_handle->esp_tls_last_esp_err));
+            }            
             break;
         default:
             ESP_LOGI(MQTT_TAG, "Unhandled event %d", (int)event_id);
@@ -311,6 +364,8 @@ esp_err_t mqtt_app_start() {
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = CONFIG_MQTT_BROKER_URL,
         .credentials.client_id = CONFIG_MQTT_CLIENT_ID,    
+        .session.keepalive = 120,
+        .network.reconnect_timeout_ms = 10000,
     };
 
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
@@ -321,22 +376,23 @@ esp_err_t mqtt_app_start() {
 
     // Publish Home Assistant discovery messages
     publish_bt_door_key_entities(mqtt_client);
+    publish_connected_phone_mac(NULL);
 
     return ESP_OK;
 }
 
-void send_mqtt_bt_connected(uint8_t* addr) {
-    char addr_str[18];
-    snprintf(addr_str, sizeof(addr_str),
-             "%02X:%02X:%02X:%02X:%02X:%02X",
-             addr[0], addr[1], addr[2],
-             addr[3], addr[4], addr[5]);
+// void send_mqtt_bt_connected(uint8_t* addr) {
+//     char addr_str[18];
+//     snprintf(addr_str, sizeof(addr_str),
+//              "%02X:%02X:%02X:%02X:%02X:%02X",
+//              addr[0], addr[1], addr[2],
+//              addr[3], addr[4], addr[5]);
 
-    char payload[64];
-    snprintf(payload, sizeof(payload), "%s", addr_str);
+//     char payload[64];
+//     snprintf(payload, sizeof(payload), "%s", addr_str);
 
-    esp_mqtt_client_publish(mqtt_client, "stat/bt_door_key/connected", payload, 0, 1, 0);
-}
+//     esp_mqtt_client_publish(mqtt_client, "stat/bt_door_key/" CMD_CONNECTED_PHONE_MAC, payload, 0, 1, 0);
+// }
 
 
 

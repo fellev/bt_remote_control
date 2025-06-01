@@ -51,6 +51,7 @@ esp_bd_addr_t target_bd_addr = {0}; // Store Bluetooth address of the phone
 static uint32_t spp_handle = 0;
 static struct timeval time_new, time_old;
 static long data_num = 0;
+static bool bt_periodic_connect_enabled = false;
 
 // Define the Bluetooth address of the Android device bc:32:b2:8b:3a:90
 // esp_bd_addr_t android_bd_addr = {0xbc, 0x32, 0xb2, 0x8b, 0x3a, 0x90};  // Felix's S23 Ultra
@@ -58,7 +59,22 @@ static long data_num = 0;
 
 static void start_sdp_discovery(const esp_bd_addr_t target_mac_address);
 
-esp_err_t bt_disconnect_from_android(void) {
+void bt_set_periodic_connect_enabled(bool enabled) {
+    bt_periodic_connect_enabled = enabled;
+}
+
+bool bt_get_periodic_connect_enabled(void) {
+    return bt_periodic_connect_enabled;
+}
+
+// Call this function to trigger periodic connect if enabled
+void bt_try_periodic_connect(void) {
+    if (bt_periodic_connect_enabled) {
+        bt_periodic_connect();
+    }
+}
+
+void bt_disconnect_from_android(void) {
     if (spp_handle != 0) { // Ensure there is an active connection
         esp_err_t err = esp_spp_disconnect(spp_handle);
         if (err == ESP_OK) {
@@ -66,10 +82,8 @@ esp_err_t bt_disconnect_from_android(void) {
         } else {
             ESP_LOGE(SPP_TAG, "Failed to initiate disconnection: %s", esp_err_to_name(err));
         }
-        return err;
     } else {
         ESP_LOGW(SPP_TAG, "No active connection to disconnect.");
-        return ESP_ERR_INVALID_STATE;
     }
 }
 
@@ -124,7 +138,7 @@ void bt_periodic_connect(void) {
     esp_err_t err;
 
     // Load the number of saved devices from NVS
-    ESP_ERROR_CHECK(device_count = get_device_count_cache());
+    device_count = get_device_count_cache();
 
     ESP_LOGI(SPP_TAG, "Number of saved devices: %d", (int)device_count);
 
@@ -241,7 +255,7 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         }
         break;
     case ESP_SPP_DISCOVERY_COMP_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_DISCOVERY_COMP_EVT");
+        ESP_LOGE(SPP_TAG, "ESP_SPP_DISCOVERY_COMP_EVT");
         if (param->disc_comp.status == ESP_SPP_SUCCESS) {
             // Discovery succeeded, extract SCN
             ESP_LOGI(SPP_TAG, "Discovered %d SPP servers", param->disc_comp.scn_num);
@@ -262,32 +276,35 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
             }
         } else {
             ESP_LOGE(SPP_TAG, "SPP service discovery failed error %d", param->disc_comp.status);
+            publish_connected_phone_mac(NULL); // Clear the saved phone MAC address
             // Add a small delay before retrying the next device
             vTaskDelay(pdMS_TO_TICKS(10));  // 10ms delay            
-            bt_periodic_connect();
+            bt_try_periodic_connect();
         }
         break;
     case ESP_SPP_OPEN_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_OPEN_EVT");
+        ESP_LOGE(SPP_TAG, "ESP_SPP_OPEN_EVT");
         spp_handle = param->open.handle; // Save the connection handle
         ESP_LOGI(SPP_TAG, "ESP_SPP_OPEN_EVT status:%d handle:%"PRIu32"", param->srv_open.status,
             param->srv_open.handle);        
 #if CONFIG_MQTT_ENABLED
-        send_mqtt_bt_connected(param->open.rem_bda);
+        bt_set_periodic_connect_enabled(false);
+        publish_connected_phone_mac(param->open.rem_bda);
 #endif // CONFIG_MQTT_ENABLED
         break;
     case ESP_SPP_CLOSE_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_CLOSE_EVT status:%d handle:%"PRIu32" close_by_remote:%d", param->close.status,
+        ESP_LOGE(SPP_TAG, "ESP_SPP_CLOSE_EVT status:%d handle:%"PRIu32" close_by_remote:%d", param->close.status,
                  param->close.handle, param->close.async);
         spp_handle = 0; // Reset the handle
-        bt_periodic_connect(); // Attempt to reconnect
+        publish_connected_phone_mac(NULL); // Clear the saved phone MAC address
+        bt_try_periodic_connect(); // Attempt to reconnect
         break;
     case ESP_SPP_START_EVT:
         if (param->start.status == ESP_SPP_SUCCESS) {
             ESP_LOGI(SPP_TAG, "ESP_SPP_START_EVT handle:%"PRIu32" sec_id:%d scn:%d", param->start.handle, param->start.sec_id,
                      param->start.scn);
             esp_bt_gap_set_device_name(local_device_name);
-            esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+            // esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
         } else {
             ESP_LOGE(SPP_TAG, "ESP_SPP_START_EVT status:%d", param->start.status);
         }
@@ -317,10 +334,10 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 #endif
         break;
     case ESP_SPP_CONG_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT");
+        ESP_LOGE(SPP_TAG, "ESP_SPP_CONG_EVT");
         break;
     case ESP_SPP_WRITE_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT");
+        ESP_LOGE(SPP_TAG, "ESP_SPP_WRITE_EVT");
         break;
     case ESP_SPP_SRV_OPEN_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
@@ -328,15 +345,17 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         gettimeofday(&time_old, NULL);
         break;
     case ESP_SPP_SRV_STOP_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_STOP_EVT");
+        ESP_LOGE(SPP_TAG, "ESP_SPP_SRV_STOP_EVT");
         break;
     case ESP_SPP_UNINIT_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_UNINIT_EVT");
+        ESP_LOGE(SPP_TAG, "ESP_SPP_UNINIT_EVT");
         break;
     default:
         break;
     }
 }
+
+
 
 static void extract_device_name(const esp_bt_gap_cb_param_t *param, char *device_name, uint8_t max_len) {
     char * received_device_name;
@@ -786,7 +805,7 @@ void bt_initialize(void) {
 
     ESP_LOGI(SPP_TAG, "Own address:[%s]", bda2str((uint8_t *)esp_bt_dev_get_address(), bda_str, sizeof(bda_str)));
 
-    bt_app_gap_start_up();
+    // bt_app_gap_start_up();
 
     // start_sdp_discovery(android_bd_addr);
 
@@ -797,6 +816,9 @@ void bt_initialize(void) {
 
     // Disables visibility
     // esp_bt_gap_set_scan_mode(ESP_BT_NON_CONNECTABLE, ESP_BT_NON_DISCOVERABLE); //TODO: Uncomment this line to disable visibility    
+
+    // Set the device to be discoverable and connectable
+    // esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
 
 }
 

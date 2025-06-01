@@ -53,10 +53,16 @@ menu "BT_DOOR_KEY Configuration"
         default "HomeKeyService"
         help
             Set the name of the Android SPP service.
-            
+
     config WIFI_ENABLED
         bool "Enable WiFi support"
         default y
         help
             Enable or disable WiFi functionality in the firmware.
+            
+    config NVS_ENABLE
+        bool "Enable NVS (Non-Volatile Storage)"
+        default y
+        help
+            Enable or disable the use of Non-Volatile Storage (NVS) in the firmware.
 endmenu

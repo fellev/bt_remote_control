@@ -24,6 +24,12 @@
         "cstdint": "c",
         "string.h": "c",
         "esp_err.h": "c",
-        "bt_mqtt_client.h": "c"
+        "bt_mqtt_client.h": "c",
+        "random": "c",
+        "array": "c",
+        "string": "c",
+        "string_view": "c",
+        "span": "c",
+        "cstdlib": "c"
     }
 }

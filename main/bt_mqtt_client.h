@@ -14,7 +14,17 @@ extern esp_mqtt_client_handle_t mqtt_client;
 
 // Function prototypes
 esp_err_t mqtt_app_start();
-void send_mqtt_bt_connected(uint8_t* addr);
+
+/**
+ * @brief Publishes the connected phone's MAC address to an MQTT topic.
+ *
+ * This function formats and publishes a JSON payload containing the connected phone's
+ * MAC address to a specific MQTT topic using the provided MQTT client handle.
+ *
+ * @param client    The MQTT client handle used for publishing the message.
+ * @param mac_addr  The MAC address of the connected phone to be published.
+ */
+void publish_connected_phone_mac(uint8_t* addr);
 
 
 #ifdef __cplusplus
