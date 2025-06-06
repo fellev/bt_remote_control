@@ -327,6 +327,14 @@ esp_err_t delete_all_bt_devices(void) {
 
     err = nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
+
+    // Clear the cache
+    device_count_cache = 0;
+    if (mac_cache != NULL) {
+        free(mac_cache);
+        mac_cache = NULL;
+    }    
+
     return err;
 }
 
@@ -508,6 +516,16 @@ esp_err_t get_paired_mac_list_from_cache(char* device_mac_list, size_t list_len)
         }
         *ptr++ = ',';
     }
+    if (ptr > device_mac_list && *(ptr - 1) == ',') {
+        ptr--; // Remove the last comma
+    }
+    *ptr = '\0'; // Null-terminate the string
+    ESP_LOGE(TAG, "Paired MAC list: %s", device_mac_list);
+    if (ptr - device_mac_list >= list_len) {
+        ESP_LOGI(TAG, "Buffer overflow detected");
+        return ESP_ERR_NO_MEM;
+    }
+    ESP_LOGE(TAG, "Paired MAC list length: %zu", ptr - device_mac_list);
 
     return ESP_OK;
 }
