@@ -14,10 +14,14 @@
 #include "bt_manager.h"
 #include "data_storage.h"
 #include "bt_mqtt_client.h"
+#include "wifi_manager.h"
 
 #define SPP_TAG "SPP"
 #define SPP_SERVER_NAME "SPP_SERVER"
 #define TARGET_DEVICE_NAME "TargetDeviceName"
+
+#define BT_CONNECT_TIMEOUT_MS (5 * 60 * 1000)  // 5 minutes
+#define TIMER_TAG "BT_TIMER"
 
 #ifdef CONFIG_BT_ENABLED
 typedef enum {
@@ -52,12 +56,28 @@ static uint32_t spp_handle = 0;
 static struct timeval time_new, time_old;
 static long data_num = 0;
 static bool bt_periodic_connect_enabled = false;
+static uint8_t last_connected_bda[ESP_BD_ADDR_LEN];
+static bool should_publish_mac = false;
+static int current_device_index = 0; 
+
+// Cache for SCN values for each device index (adjust size as needed)
+#define MAX_BT_DEVICES 5
+static int cached_scn[MAX_BT_DEVICES] = {0xffff, 0xffff, 0xffff, 0xffff, 0xffff}; // Initialize to invalid SCN
 
 // Define the Bluetooth address of the Android device bc:32:b2:8b:3a:90
 // esp_bd_addr_t android_bd_addr = {0xbc, 0x32, 0xb2, 0x8b, 0x3a, 0x90};  // Felix's S23 Ultra
 // esp_bd_addr_t android_bd_addr = {0x4c, 0x2e, 0x5e, 0x43, 0xed, 0x5c};  // Lina's S22 
 
+void bt_set_current_device_index(int index) {
+    current_device_index = index;
+}
+
+int bt_get_current_device_index(void) {
+    return current_device_index;
+}
+
 static void start_sdp_discovery(const esp_bd_addr_t target_mac_address);
+
 
 void bt_set_periodic_connect_enabled(bool enabled) {
     bt_periodic_connect_enabled = enabled;
@@ -131,7 +151,6 @@ void bt_reset_device(void) {
 }
 
 void bt_periodic_connect(void) {
-    static int current_device_index = 0;
     int32_t device_count = 0;
     esp_bd_addr_t saved_bd_addr;
     char saved_device_name[64] = {0};
@@ -147,6 +166,7 @@ void bt_periodic_connect(void) {
         return;
     }
 
+    // Ensure the current device index is within bounds
     if (current_device_index >= device_count) {
         current_device_index = 0; // Reset index if it exceeds the count
     }
@@ -161,8 +181,20 @@ void bt_periodic_connect(void) {
              saved_bd_addr[0], saved_bd_addr[1], saved_bd_addr[2],
              saved_bd_addr[3], saved_bd_addr[4], saved_bd_addr[5]);
 
-    // Start SPP discovery to get the SCN for the saved device
-    start_sdp_discovery(saved_bd_addr);
+    if (cached_scn[current_device_index] != 0xffff) {
+        ESP_LOGI(SPP_TAG, "Using cached SCN for device %d: %d", current_device_index, cached_scn[current_device_index]);
+        // Use the cached SCN for the device
+        err = esp_spp_connect(ESP_SPP_SEC_AUTHENTICATE, ESP_SPP_ROLE_MASTER, cached_scn[current_device_index], saved_bd_addr);
+        if (err == ESP_OK) {
+            ESP_LOGI(SPP_TAG, "Connection initiated successfully for device %d.", current_device_index);
+        } else {
+            ESP_LOGE(SPP_TAG, "Failed to initiate connection for device %d: %s", current_device_index, esp_err_to_name(err));
+        }
+    } else {
+        ESP_LOGI(SPP_TAG, "No cached SCN for device %d, starting SDP discovery.", current_device_index);
+        // Start SDP discovery to find the SCN
+        start_sdp_discovery(saved_bd_addr);
+    }
 
     ESP_LOGI(SPP_TAG, "Number of saved devices: %d", (int)device_count);
     // Move to the next device in the list
@@ -247,7 +279,7 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
     switch (event) {
     case ESP_SPP_INIT_EVT:
         if (param->init.status == ESP_SPP_SUCCESS) {
-            ESP_LOGI(SPP_TAG, "ESP_SPP_INIT_EVT");
+            ESP_LOGE(SPP_TAG, "ESP_SPP_INIT_EVT");
             esp_spp_start_srv(sec_mask, role_slave, 0, SPP_SERVER_NAME);
              ESP_LOGI(SPP_TAG, "SPP initialized");
         } else {
@@ -265,6 +297,13 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
                 // Check if the service name matches the target Android SPP service name
                 if (strcmp(param->disc_comp.service_name[i], CONFIG_ANDROID_SPP_SERVICE_NAME) == 0) {
                     int scn = param->disc_comp.scn[i];
+                    current_device_index = bt_get_current_device_index();
+                    // Cache the SCN for the current device index
+                    if (current_device_index < 0 || current_device_index >= MAX_BT_DEVICES) {
+                        ESP_LOGE(SPP_TAG, "Invalid current device index: %d", current_device_index);
+                        return;
+                    }
+                    cached_scn[current_device_index] = scn; // Cache the SCN for the current device index
                     ESP_LOGI(SPP_TAG, "Found SCN for service %s: %d", CONFIG_ANDROID_SPP_SERVICE_NAME, scn);
                     ESP_LOGI(SPP_TAG, "Target device MAC address: %02X:%02X:%02X:%02X:%02X:%02X",
                              target_bd_addr[0], target_bd_addr[1], target_bd_addr[2],
@@ -276,8 +315,8 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
             }
         } else {
             ESP_LOGE(SPP_TAG, "SPP service discovery failed error %d", param->disc_comp.status);
-            publish_connected_phone_mac(NULL); // Clear the saved phone MAC address
             // Add a small delay before retrying the next device
+            cached_scn[current_device_index] = 0xffff; // Reset cached SCN for this device
             vTaskDelay(pdMS_TO_TICKS(10));  // 10ms delay            
             bt_try_periodic_connect();
         }
@@ -286,22 +325,25 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGE(SPP_TAG, "ESP_SPP_OPEN_EVT");
         spp_handle = param->open.handle; // Save the connection handle
         ESP_LOGI(SPP_TAG, "ESP_SPP_OPEN_EVT status:%d handle:%"PRIu32"", param->srv_open.status,
-            param->srv_open.handle);        
-#if CONFIG_MQTT_ENABLED
+            param->srv_open.handle);   
+
+        // Save the last connected device's Bluetooth address
+        memcpy(last_connected_bda, param->open.rem_bda, ESP_BD_ADDR_LEN);
+        publish_connected_phone_mac(last_connected_bda);
+        // Disconnect immediately
+        esp_spp_disconnect(param->open.handle);
         bt_set_periodic_connect_enabled(false);
-        publish_connected_phone_mac(param->open.rem_bda);
-#endif // CONFIG_MQTT_ENABLED
+
         break;
     case ESP_SPP_CLOSE_EVT:
         ESP_LOGE(SPP_TAG, "ESP_SPP_CLOSE_EVT status:%d handle:%"PRIu32" close_by_remote:%d", param->close.status,
                  param->close.handle, param->close.async);
         spp_handle = 0; // Reset the handle
-        publish_connected_phone_mac(NULL); // Clear the saved phone MAC address
         bt_try_periodic_connect(); // Attempt to reconnect
         break;
     case ESP_SPP_START_EVT:
         if (param->start.status == ESP_SPP_SUCCESS) {
-            ESP_LOGI(SPP_TAG, "ESP_SPP_START_EVT handle:%"PRIu32" sec_id:%d scn:%d", param->start.handle, param->start.sec_id,
+            ESP_LOGE(SPP_TAG, "ESP_SPP_START_EVT handle:%"PRIu32" sec_id:%d scn:%d", param->start.handle, param->start.sec_id,
                      param->start.scn);
             esp_bt_gap_set_device_name(local_device_name);
             // esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
@@ -310,7 +352,7 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         }
         break;
     case ESP_SPP_CL_INIT_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_CL_INIT_EVT");
+        ESP_LOGE(SPP_TAG, "ESP_SPP_CL_INIT_EVT");
         break;
     case ESP_SPP_DATA_IND_EVT:
 #if (SPP_SHOW_MODE == SPP_SHOW_DATA)
@@ -340,7 +382,7 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGE(SPP_TAG, "ESP_SPP_WRITE_EVT");
         break;
     case ESP_SPP_SRV_OPEN_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
+        ESP_LOGE(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
                  param->srv_open.handle, bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str)));
         gettimeofday(&time_old, NULL);
         break;
@@ -556,14 +598,18 @@ void esp_bt_gap_handler(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *para
                                 param->auth_cmpl.bda[0], param->auth_cmpl.bda[1], param->auth_cmpl.bda[2],
                                 param->auth_cmpl.bda[3], param->auth_cmpl.bda[4], param->auth_cmpl.bda[5]);
                         device_count++;
-                        if (save_bt_count(device_count) != ESP_OK) {
-                            ESP_LOGE(SPP_TAG, "Failed to save device count to NVS");
-                        }
-                        ESP_LOGI(SPP_TAG, "Device count saved: %ld", device_count);
-                        if (load_all_bt_devices_to_cache() != ESP_OK) {
-                            ESP_LOGE(SPP_TAG, "Failed to load all Bluetooth devices to cache");
+                        if (device_count > MAX_BT_DEVICES) {
+                            ESP_LOGE(SPP_TAG, "Device count exceeds maximum limit");
                         } else {
-                            ESP_LOGI(SPP_TAG, "All Bluetooth devices loaded to cache successfully");
+                            if (save_bt_count(device_count) != ESP_OK) {
+                                ESP_LOGE(SPP_TAG, "Failed to save device count to NVS");
+                            }
+                            ESP_LOGI(SPP_TAG, "Device count saved: %ld", device_count);
+                            if (load_all_bt_devices_to_cache() != ESP_OK) {
+                                ESP_LOGE(SPP_TAG, "Failed to load all Bluetooth devices to cache");
+                            } else {
+                                ESP_LOGI(SPP_TAG, "All Bluetooth devices loaded to cache successfully");
+                            }
                         }
                     }
                 }
@@ -688,8 +734,7 @@ void bt_send_message(const char *message) {
     }
 }
 
-static void bt_app_gap_init(void)
-{
+static void bt_app_gap_init(void) {
     app_gap_cb_t *p_dev = &m_dev_info;
     memset(p_dev, 0, sizeof(app_gap_cb_t));
 
@@ -715,8 +760,7 @@ void stop_sdp_discovery(void) {
     memset(target_bd_addr, 0, sizeof(esp_bd_addr_t)); // Clear the target Bluetooth address
 }
 
-static void bt_app_gap_start_up(void)
-{
+static void bt_app_gap_start_up(void) {
     /* register GAP callback function */
     // esp_bt_gap_register_callback(bt_app_gap_cb);
 

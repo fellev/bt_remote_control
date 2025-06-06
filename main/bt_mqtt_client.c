@@ -11,6 +11,7 @@
 #include "bt_manager.h"
 #include "esp_log.h"
 #include "data_storage.h"
+#include "bt_gpio.h"
 
 
 #define MQTT_TOPIC_PAIRING "cmd/bt_door_key/pairing"
@@ -44,6 +45,15 @@
 
 #if CONFIG_MQTT_ENABLED
 esp_mqtt_client_handle_t mqtt_client = NULL;
+
+// static EventGroupHandle_t mqtt_event_group;
+static bool mqtt_post_connection_status_enabled = false; // Enable posting connection status to MQTT
+
+void set_mqtt_post_connection_status_enabled(bool enabled) {
+    mqtt_post_connection_status_enabled = enabled;
+}
+
+// #define MQTT_CONNECTED_BIT BIT0
 
 static void publish_entity(esp_mqtt_client_handle_t client, const char *topic_fmt, const char *type, const char *name, const char *uid, const char *extra) {
     char *topic = malloc(128);
@@ -100,7 +110,7 @@ static void publish_paired_devices(esp_mqtt_client_handle_t client) {
     free(payload);
 }
 
-static void publish_bt_door_key_entities(esp_mqtt_client_handle_t client) {
+void publish_bt_door_key_entities() {
     static const struct {
         const char *topic_fmt, *type, *name, *uid, *extra;
     } entities[] = {
@@ -114,34 +124,21 @@ static void publish_bt_door_key_entities(esp_mqtt_client_handle_t client) {
         { HA_SENSOR_TOPIC"/%s/config", HA_SENSOR, "Connected Phone MAC", CMD_CONNECTED_PHONE_MAC, ",\"state_topic\":\"bt_door_key/state/" CMD_CONNECTED_PHONE_MAC "\"" }
     };
     for (size_t i = 0; i < sizeof(entities)/sizeof(entities[0]); ++i)
-        publish_entity(client, entities[i].topic_fmt, entities[i].type, entities[i].name, entities[i].uid, entities[i].extra);
-    publish_paired_devices(client);
+        publish_entity(mqtt_client, entities[i].topic_fmt, entities[i].type, entities[i].name, entities[i].uid, entities[i].extra);
+    publish_paired_devices(mqtt_client);
 }
 
-static void publish_bt_door_key_state(esp_mqtt_client_handle_t client, const char *uid) {
-    char *topic = malloc(128);
-    char *payload = malloc(64);
-
-    if (topic == NULL || payload == NULL) {
-        ESP_LOGE(MQTT_TAG, "Failed to allocate memory for topic or payload");
-        if (topic) free(topic);
-        if (payload) free(payload);
-        return;
-    }
-
-    snprintf(topic, 128, "bt_door_key/state/%s", uid);
-    snprintf(payload, 64, "{\"state\":\"%s\"}", uid);
-
-    int msg_id = esp_mqtt_client_publish(client, topic, payload, 0, 1, 1);
-    ESP_LOGI(MQTT_TAG, "Published state to %s, msg_id=%d", topic, msg_id);
-
-    free(topic);
-    free(payload);
-}
 
 void publish_connected_phone_mac(uint8_t* addr) {
     char topic[128];
     char payload[65];
+
+    set_connected_phone_gpio(addr != NULL);
+
+    if (mqtt_post_connection_status_enabled == false) {
+        ESP_LOGI(MQTT_TAG, "Posting connection status to MQTT is disabled");
+        return;
+    }
 
     snprintf(topic, sizeof(topic), "bt_door_key/state/%s", CMD_CONNECTED_PHONE_MAC);
 
@@ -222,6 +219,7 @@ static void handle_host_command(const char *topic, int topic_len, const char *da
         #if CONFIG_BT_ENABLED
         delete_all_bt_devices();
         #endif // CONFIG_BT_ENABLED
+        publish_connected_phone_mac(NULL);
     } else if (strcmp(command, CMD_RESET_DEVICE) == 0) {
         ESP_LOGI(MQTT_TAG, "Resetting device");
         esp_restart();
@@ -230,6 +228,7 @@ static void handle_host_command(const char *topic, int topic_len, const char *da
         #if CONFIG_BT_ENABLED
         stop_sdp_discovery();
         bt_set_periodic_connect_enabled(false);
+        publish_connected_phone_mac(NULL);
         #endif // CONFIG_BT_ENABLED
     } else if (strcmp(command, CMD_CONNECT_ANDROID) == 0) {
         ESP_LOGI(MQTT_TAG, "Connecting to Android device");
@@ -242,6 +241,7 @@ static void handle_host_command(const char *topic, int topic_len, const char *da
         #if CONFIG_BT_ENABLED
         bt_set_periodic_connect_enabled(false);
         bt_disconnect_from_android();
+        publish_connected_phone_mac(NULL);
         #endif // CONFIG_BT_ENABLED
     } else if (strcmp(command, CMD_BLUETOOTH_PAIRING_MODE) == 0) {
         if (strcmp(payload, "ON") == 0) {
@@ -261,45 +261,6 @@ static void handle_host_command(const char *topic, int topic_len, const char *da
         ESP_LOGE(MQTT_TAG, "Unknown host command: %s", command);
     }
 }
-
-// static void handle_received_data(const char* topic, int topic_len, const char* data, int data_len) {
-//     if (strncmp(topic, MQTT_TOPIC_PAIRING, topic_len) == 0) {
-//         if (strncmp(data, "start", data_len) == 0) {
-//             ESP_LOGE(MQTT_TAG, "Enabling Bluetooth pairing mode");
-//             #if CONFIG_BT_ENABLED
-//             esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
-//             #endif // CONFIG_BT_ENABLED
-//         } else if (strncmp(data, "stop", data_len) == 0) {
-//             ESP_LOGE(MQTT_TAG, "Disabling Bluetooth pairing mode");
-//             #if CONFIG_BT_ENABLED
-//             esp_bt_gap_set_scan_mode(ESP_BT_NON_CONNECTABLE, ESP_BT_NON_DISCOVERABLE);
-//             #endif // CONFIG_BT_ENABLED
-//         }
-//         else if (strncmp(data, "connect", data_len) == 0) {
-//             ESP_LOGE(MQTT_TAG, "Connecting to Android device");
-//             #if CONFIG_BT_ENABLED
-//             bt_periodic_connect();
-//             #endif // CONFIG_BT_ENABLED
-//         } else if (strncmp(data, "disconnect", data_len) == 0) {
-//             ESP_LOGE(MQTT_TAG, "Disconnecting from Android device");
-//             #if CONFIG_BT_ENABLED
-//             bt_disconnect_from_android();
-//             #endif // CONFIG_BT_ENABLED
-//          } else if (strncmp(data, "reset", data_len) == 0) {
-//             ESP_LOGE(MQTT_TAG, "Resetting device");
-//             #if CONFIG_BT_ENABLED
-//             bt_reset_device();
-//             #endif // CONFIG_BT_ENABLED
-//         } else if (strncmp(data, "stop_discovery", data_len) == 0) {
-//             ESP_LOGE(MQTT_TAG, "Stopping SDP discovery");
-//             #if CONFIG_BT_ENABLED
-//             stop_sdp_discovery();
-//             #endif // CONFIG_BT_ENABLED
-//         } else {
-//             ESP_LOGE(MQTT_TAG, "Unknown command: %.*s", data_len, data);
-//         }
-//     }
-// }
 
 static void subscribe_bt_door_key_commands(esp_mqtt_client_handle_t client) {
     static const char *topics[] = {
@@ -328,6 +289,7 @@ static void mqtt_event_handler(void* event_handler_arg, esp_event_base_t event_b
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(MQTT_TAG, "MQTT Connected");
+            // xEventGroupSetBits(mqtt_event_group, MQTT_CONNECTED_BIT);
             subscribe_bt_door_key_commands(mqtt_client);
             // bt_periodic_connect();
             break;

@@ -26,6 +26,21 @@ esp_err_t mqtt_app_start();
  */
 void publish_connected_phone_mac(uint8_t* addr);
 
+/**
+ * @brief Publishes Home Assistant MQTT discovery entities for the BT door key.
+ *
+ * This function publishes MQTT discovery messages for all supported entities
+ * (buttons, sensors, switches) to allow Home Assistant to automatically
+ * discover and configure them.
+ */
+void publish_bt_door_key_entities();
+
+/**
+ * @brief Enables or disables posting connection status over MQTT.
+ *
+ * @param enabled  Set to true to enable posting, false to disable.
+ */
+void set_mqtt_post_connection_status_enabled(bool enabled);
 
 #ifdef __cplusplus
 }

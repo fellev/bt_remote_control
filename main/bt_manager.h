@@ -108,6 +108,24 @@ bool bt_get_periodic_connect_enabled(void);
  */
 void bt_try_periodic_connect(void);
 
+/**
+ * @brief Start the Bluetooth connection timeout timer.
+ */
+void start_bt_connect_timeout_timer(void);
+
+/**
+ * @brief Set the index of the current Bluetooth device.
+ * 
+ * @param index The index to set as the current device.
+ */
+void bt_set_current_device_index(int index);
+
+/**
+ * @brief Get the index of the current Bluetooth device.
+ * 
+ * @return The current device index.
+ */
+int bt_get_current_device_index(void);
 
 #endif // CONFIG_BT_ENABLED
 

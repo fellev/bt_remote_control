@@ -30,6 +30,10 @@
         "string": "c",
         "string_view": "c",
         "span": "c",
-        "cstdlib": "c"
+        "cstdlib": "c",
+        "timers.h": "c",
+        "wifi_manager.h": "c",
+        "data_storage.h": "c",
+        "gpio.h": "c"
     }
 }

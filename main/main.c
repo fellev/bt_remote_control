@@ -13,6 +13,7 @@
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 
 #if CONFIG_BT_ENABLED
@@ -24,10 +25,7 @@
 #include "esp_bt_defs.h"
 #endif //CONFIG_BT_ENABLED
 
-#include "esp_mac.h"
-#include "esp_wifi.h"
-#include "esp_netif.h"
-#include "esp_event.h"
+
 
 #include "mqtt_client.h"
 
@@ -35,70 +33,88 @@
 #include "time.h"
 #include "sys/time.h"
 
+#include "bt_main.h"
 #include "data_storage.h"
 #include "bt_manager.h"
 #include "bt_mqtt_client.h"
+#include "wifi_manager.h"
+#include "bt_gpio.h"
 
 
-#define WIFI_TAG "WIFI"
 #define BT_MAIN_TAG "BT_MAIN"
-#define SPP_SERVER_NAME "SPP_SERVER"
-#define TARGET_DEVICE_NAME "Felix's S23 Ultra"
-#define SPP_SHOW_DATA 0
-#define SPP_SHOW_SPEED 1
-#define SPP_SHOW_MODE SPP_SHOW_SPEED    /*Choose show mode: show data or speed*/
-
-#define WIFI_SSID "MyHomeNetwork"
-#define WIFI_PASS "Barbur18bet"
 
 
-#define TAG_WIFI "WIFI"
+static QueueHandle_t bt_event_queue = NULL;
 
-//************** WIFI related code start **************/
-#if CONFIG_WIFI_ENABLED
 
-static void event_handler_wifi(void *arg, esp_event_base_t event_base,
-                          int32_t event_id, void *event_data) {
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGI(TAG_WIFI, "Disconnected. Reconnecting...");
-        esp_wifi_connect();
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-        ESP_LOGI(TAG_WIFI, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-#if CONFIG_MQTT_ENABLED
-        mqtt_app_start(); // Start MQTT now
-#endif
+void set_connected_phone_gpio(bool connected);
+
+static void start_wifi_connection(void) {
+    ESP_LOGI(BT_MAIN_TAG, "Starting Wi-Fi connection...");
+    set_mqtt_post_connection_status_enabled(true); // Enable MQTT posting connection status
+    if (wifi_init_sta() == ESP_OK) {
+        ESP_LOGI(BT_MAIN_TAG, "Wi-Fi connection started successfully.");
+    } else {
+        ESP_LOGE(BT_MAIN_TAG, "Failed to start Wi-Fi connection.");
     }
 }
 
-esp_err_t wifi_init_sta(void) {
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler_wifi, NULL, NULL);
-    esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler_wifi, NULL, NULL);
-
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = WIFI_SSID,
-            .password = WIFI_PASS,
-        },
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    ESP_LOGI(TAG_WIFI, "Wi-Fi init finished");
-    return ESP_OK;
+static void stop_wifi_connection(void) {
+    ESP_LOGI(BT_MAIN_TAG, "Restarting to stop Wi-Fi connection");
+    esp_restart(); // Restarting to stop Wi-Fi connection
 }
 
-#endif // CONFIG_WIFI_ENABLED
+static void start_connection(void) {
+    ESP_LOGI(BT_MAIN_TAG, "Starting connection...");
+    bt_set_periodic_connect_enabled(true);
+    bt_try_periodic_connect();
+}
+
+static void stop_connection(void) {
+    ESP_LOGI(BT_MAIN_TAG, "Stopping connection...");
+    publish_connected_phone_mac(NULL);
+    bt_set_periodic_connect_enabled(false);
+    bt_disconnect_from_android();
+}
+
+static void bt_event_task(void *arg) {
+    bt_event_t event;
+    
+    while (1) {
+        if (xQueueReceive(bt_event_queue, &event, portMAX_DELAY)) {
+            ESP_LOGE(BT_MAIN_TAG, "Received BT event: %d", event);
+            switch (event) {
+                case BT_EVENT_START_WIFI:
+                    start_wifi_connection();
+                    break;
+                case BT_EVENT_STOP_WIFI:
+                    stop_wifi_connection();
+                    break;
+                case BT_EVENT_PHONE_CONNECTED:
+                    set_connected_phone_gpio(true);
+                    break;
+                case BT_EVENT_PHONE_DISCONNECTED:
+                    set_connected_phone_gpio(false);
+                    break;
+                case BT_EVENT_START_CONNECTION:
+                    start_connection();
+                    break;
+                case BT_EVENT_STOP_CONNECTION:
+                    stop_connection();
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+}
+
+// Call this function from anywhere to post an event
+void post_bt_event(bt_event_t event) {
+    if (bt_event_queue) {
+        xQueueSend(bt_event_queue, &event, 0);
+    }
+}
 
 void app_main(void)
 {
@@ -160,9 +176,9 @@ void app_main(void)
 #endif //CONFIG_BT_ENABLED
 
 #if CONFIG_WIFI_ENABLED
-    if (wifi_init_sta() == ESP_OK) {
-        ESP_LOGE(WIFI_TAG, "WIFI connected...");
-    }
+    // if (wifi_init_sta() == ESP_OK) {
+    //     ESP_LOGE(BT_MAIN_TAG, "WIFI connected...");
+    // }
 #endif // CONFIG_WIFI_ENABLED
 
 
@@ -176,4 +192,11 @@ void app_main(void)
     // }
     // ESP_ERROR_CHECK(bt_connect_to_android());
 #endif //CONFIG_BT_ENABLED
+
+    // Create the event queue and task before using post_bt_event
+    bt_event_queue = xQueueCreate(8, sizeof(bt_event_t));
+    xTaskCreate(bt_event_task, "bt_event_task", 3072, NULL, 10, NULL);
+
+    init_button_gpio();
+    ESP_LOGI(BT_MAIN_TAG, "Button GPIO initialized");
 }
