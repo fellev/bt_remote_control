@@ -72,11 +72,15 @@ static void gpio_isr_handler_wifi(void* arg) {
 }
 
 void set_connected_phone_gpio(bool connected) {
-    gpio_set_level(CONNECTED_PHONE_GPIO, connected ? 1 : 0);
+    if (connected) {
+        gpio_set_level(CONNECTED_PHONE_GPIO, 0);
+        vTaskDelay(pdMS_TO_TICKS(1000)); // 1s delay
+        gpio_set_level(CONNECTED_PHONE_GPIO, 1);
+    }
 }
 
 void tasmota_reset_pulse(void) {
-    gpio_set_direction(TASMOTA_RESET_GPIO, GPIO_MODE_OUTPUT);
+    vTaskDelay(pdMS_TO_TICKS(1000));  // 1s delay
     gpio_set_level(TASMOTA_RESET_GPIO, 0);
     vTaskDelay(pdMS_TO_TICKS(500));  // 500ms delay
     gpio_set_level(TASMOTA_RESET_GPIO, 1);
@@ -94,7 +98,15 @@ void init_button_gpio(void) {
 
     // Set CONNECTED_PHONE_GPIO as output and default low
     gpio_set_direction(CONNECTED_PHONE_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level(CONNECTED_PHONE_GPIO, 0);
+    gpio_set_level(CONNECTED_PHONE_GPIO, 1);
+    gpio_set_direction(TASMOTA_RESET_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(TASMOTA_RESET_GPIO, 1);
+
+    ESP_LOGE(TAG_GPIO, "Initializing button GPIOs...");
+
+    vTaskDelay(pdMS_TO_TICKS(5000));  // 5s delay. Wait for Tasbota to boot up
+
+    ESP_LOGE(TAG_GPIO, "5 seconds delay completed");
 
     // Set TASMOTA_RESET_GPIO as output and default high after pulse
     tasmota_reset_pulse();
@@ -108,6 +120,10 @@ void init_button_gpio(void) {
 
     ESP_LOGI(TAG_GPIO, "Button GPIOs initialized on pins %d (BT), %d (WiFi), %d (CONNECTED_PHONE), %d (TASMOTA_RESET)", 
         START_CONNECTION_GPIO, START_WIFI_GPIO, CONNECTED_PHONE_GPIO, TASMOTA_RESET_GPIO);
+}
+
+int get_start_connection_gpio_state(void) {
+    return gpio_get_level(START_CONNECTION_GPIO);
 }
 
 

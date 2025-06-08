@@ -198,5 +198,11 @@ void app_main(void)
     xTaskCreate(bt_event_task, "bt_event_task", 3072, NULL, 10, NULL);
 
     init_button_gpio();
+
+    // Check if START_CONNECTION_GPIO is set, and post BT_EVENT_START_CONNECTION event if so
+    if (get_start_connection_gpio_state() == 1) {
+        post_bt_event(BT_EVENT_START_CONNECTION);
+    }
+
     ESP_LOGI(BT_MAIN_TAG, "Button GPIO initialized");
 }

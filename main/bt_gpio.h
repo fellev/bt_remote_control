@@ -25,6 +25,13 @@ void init_button_gpio(void);
  */
 void set_connected_phone_gpio(bool connected);
 
+/**
+ * @brief Gets the current state of the start connection GPIO pin.
+ *
+ * @return The current level of the START_CONNECTION_GPIO (0 or 1).
+ */
+int get_start_connection_gpio_state(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -176,7 +176,7 @@ void bt_periodic_connect(void) {
         ESP_LOGE(SPP_TAG, "Failed to load Bluetooth device from NVS");
         return;
     }
-    ESP_LOGI(SPP_TAG, "Attempting periodic connection to device %d: [%02X:%02X:%02X:%02X:%02X:%02X]",
+    ESP_LOGE(SPP_TAG, "Attempting periodic connection to device %d: [%02X:%02X:%02X:%02X:%02X:%02X]",
              current_device_index, 
              saved_bd_addr[0], saved_bd_addr[1], saved_bd_addr[2],
              saved_bd_addr[3], saved_bd_addr[4], saved_bd_addr[5]);
@@ -329,7 +329,9 @@ static void esp_spp_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 
         // Save the last connected device's Bluetooth address
         memcpy(last_connected_bda, param->open.rem_bda, ESP_BD_ADDR_LEN);
-        publish_connected_phone_mac(last_connected_bda);
+        if (bt_get_periodic_connect_enabled()) {
+            publish_connected_phone_mac(last_connected_bda);
+        }
         // Disconnect immediately
         esp_spp_disconnect(param->open.handle);
         bt_set_periodic_connect_enabled(false);
