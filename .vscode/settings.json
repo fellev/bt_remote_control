@@ -1,5 +1,5 @@
 {
-    "idf.port": "/dev/ttyUSB0",
+    "idf.port": "/dev/ttyACM0",
     "idf.flashType": "UART",
     "idf.espIdfPath": "/home/felix/esp/v5.4/esp-idf",
     "idf.toolsPath": "/home/felix/.espressif",
@@ -34,6 +34,17 @@
         "timers.h": "c",
         "wifi_manager.h": "c",
         "data_storage.h": "c",
-        "gpio.h": "c"
+        "gpio.h": "c",
+        "bt_main.h": "c",
+        "bt_manager.h": "c",
+        "bt_gpio.h": "c",
+        "ble_server.h": "c"
+    },
+    "idf.pythonInstallPath": "/usr/bin/python3",
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "idf.customExtraVars": {
+        "IDF_TARGET": "esp32s3"
     }
 }

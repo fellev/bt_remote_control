@@ -10,27 +10,18 @@
 extern "C" {
 #endif
 
-
-// Function declarations
-void init_button_gpio(void);
-
 /**
- * @brief Sets the GPIO level to indicate the connection status of a phone.
+ * @brief Initializes the button hardware and software resources.
  *
- * This function sets the specified GPIO pin to HIGH or LOW depending on whether
- * a phone is connected or not. It is typically used to control an LED or other
- * indicator to reflect the connection state.
+ * This function sets up the GPIOs for all buttons, configures their input modes,
+ * enables pull-up resistors, and attaches interrupt handlers for button events.
+ * It also creates a timer for each button to handle long press detection and
+ * assigns the user-defined callback for button events.
  *
- * @param connected Set to true if the phone is connected, false otherwise.
+ * The function should be called during system initialization before using any
+ * button-related functionality.
  */
-void set_connected_phone_gpio(bool connected);
-
-/**
- * @brief Gets the current state of the start connection GPIO pin.
- *
- * @return The current level of the START_CONNECTION_GPIO (0 or 1).
- */
-int get_start_connection_gpio_state(void);
+void init_buttons(void);
 
 #ifdef __cplusplus
 }

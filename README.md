@@ -1,2 +1,3 @@
-# Bluetooth Door Key
-Allow to unlock door when BT connection is established via Bluetooth with home_key Android application
+# Bluetooth Remote Control
+This project enables control of Home Assistant entities using an ESP32 device equipped with physical buttons and connected to a mobile phone via Bluetooth. A dedicated Android application receives commands from the ESP32 over Bluetooth and forwards them to the Home Assistant instance over the internet. 
+The system is specifically designed to open the garage door from within a car.
