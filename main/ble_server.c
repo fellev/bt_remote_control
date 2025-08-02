@@ -25,21 +25,23 @@ static uint16_t descr_handle;
 static uint16_t conn_id;
 
 static const uint8_t adv_service_uuid128[16] = {
-    0x01, 0xFF, 0x00, 0x00,
-    0x00, 0x00, 0x10, 0x00,
-    0x80, 0x00, 0x00, 0x80,
-    0x5F, 0x9B, 0x34, 0xFB
+    0xFB, 0x34, 0x9B, 0x5F,
+    0x80, 0x00,
+    0x00, 0x80,
+    0x00, 0x10,
+    0x00, 0x00,
+    0x01, 0xFF, 0x00, 0x00
 };
 
 static esp_bt_uuid_t char_uuid = {
     .len = ESP_UUID_LEN_128,
     .uuid = {.uuid128 = {
-        0x34, 0x12, 0x00, 0x00,
-        0x00, 0x00,
-        0x10, 0x00,
+        0xfb, 0x34, 0x9b, 0x5f,
         0x80, 0x00,
         0x00, 0x80,
-        0x5F, 0x9B, 0x34, 0xFB
+        0x00, 0x10,
+        0x00, 0x00,
+        0x34, 0x12, 0x00, 0x00
     }},
 };
 
@@ -152,6 +154,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
             if (ret) {
                 ESP_LOGE(TAG, "Failed to configure advertising data: %s", esp_err_to_name(ret));
             }            
+
             // esp_ble_gap_start_advertising(&adv_params);
             break;
 
@@ -177,8 +180,15 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                 }
             }
             break;
-
+        case ESP_GATTS_CONF_EVT:
+            if (param->conf.status == ESP_GATT_OK) {
+                ESP_LOGI(TAG, "Notification/Indication confirmed by client");
+            } else {
+                ESP_LOGW(TAG, "Notification confirmation failed, status: %d", param->conf.status);
+            }
+            break;
         default:
+            ESP_LOGI(TAG, "Unhandled GATT Event: %d", event);
             break;
     }
 }
