@@ -16,6 +16,8 @@
 #include "freertos/timers.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "bt_event.h"
+
 
 #define NUM_BUTTONS 4
 #define LONG_PRESS_TIME_MS 1000  // Threshold for long press
@@ -50,6 +52,9 @@ static void IRAM_ATTR button_isr_handler(void *arg) {
     gpio_num_t gpio = (gpio_num_t)(uint32_t)arg;
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     int index = -1;
+    static int64_t last_isr_time[NUM_BUTTONS] = {0};
+    int64_t now = esp_timer_get_time() / 1000; // ms
+    const int DEBOUNCE_TIME_MS = 20;
 
     for (int i = 0; i < NUM_BUTTONS; i++) {
         if (button_states[i].gpio == gpio) {
@@ -58,6 +63,12 @@ static void IRAM_ATTR button_isr_handler(void *arg) {
         }
     }
     if (index < 0) return;
+    
+    // Debounce logic
+    if ((now - last_isr_time[index]) < DEBOUNCE_TIME_MS) {
+        return; // Ignore due to debounce
+    }
+    last_isr_time[index] = now;
 
     if (gpio_get_level(gpio) == 0) {  // Falling edge = press
         button_states[index].press_time = esp_timer_get_time() / 1000; // ms
@@ -66,12 +77,15 @@ static void IRAM_ATTR button_isr_handler(void *arg) {
     } else {  // Rising edge = release
         xTimerStopFromISR(button_states[index].timer, &xHigherPriorityTaskWoken);
 
-        if (!button_states[index].long_press_triggered) {
-            int64_t now = esp_timer_get_time() / 1000;
-            if ((now - button_states[index].press_time) < LONG_PRESS_TIME_MS) {
-                if (user_button_callback) {
-                    user_button_callback(gpio, false); // short press
-                }
+        // Only call user_button_callback here (on release)
+        int64_t now = esp_timer_get_time() / 1000;
+        if (button_states[index].long_press_triggered) {
+            if (user_button_callback) {
+                user_button_callback(gpio, true); // long press
+            }
+        } else if ((now - button_states[index].press_time) < LONG_PRESS_TIME_MS) {
+            if (user_button_callback) {
+                user_button_callback(gpio, false); // short press
             }
         }
     }
@@ -86,18 +100,20 @@ static void long_press_timer_callback(TimerHandle_t xTimer) {
         if (xTimer == button_states[i].timer) {
             if (gpio_get_level(button_states[i].gpio) == 0) {  // Still pressed
                 button_states[i].long_press_triggered = true;
-                if (user_button_callback) {
-                    user_button_callback(button_states[i].gpio, true); // long press
-                }
             }
             break;
         }
     }
 }
 static void button_event_handler(gpio_num_t gpio, bool long_press) {
-    ESP_LOGI("BTN_EVT", "GPIO %d %s press", gpio, long_press ? "LONG" : "SHORT");
+    // ESP_LOGI("BTN_EVT", "GPIO %d %s press", (uint16_t)gpio, long_press ? "LONG" : "SHORT");
 
     // Do something like send Bluetooth command
+    if (long_press) {
+        bt_event_send(BUTTON_EVENT_LONG, gpio);
+    } else {
+        bt_event_send(BUTTON_EVENT_SHORT, gpio);
+    }
 }
 
 void init_buttons(void) {
@@ -132,6 +148,16 @@ void init_buttons(void) {
 
     ESP_LOGI(TAG, "Buttons initialized");
 }
+ 
+int get_button_index(gpio_num_t gpio) {
+    for (int i = 0; i < NUM_BUTTONS; i++) {
+        if (button_gpios[i] == gpio) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 
 
 

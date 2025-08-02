@@ -72,7 +72,6 @@ esp_ble_adv_data_t adv_data = {
     .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
 };
 
-
 void send_ble_message(const char* msg) {
     esp_ble_gatts_send_indicate(gatt_if, conn_id, char_handle,
                                 strlen(msg), (uint8_t*)msg, false);
@@ -161,6 +160,14 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
         case ESP_GATTS_CONNECT_EVT:
             ESP_LOGI(TAG, "Device connected");
             conn_id = param->connect.conn_id;
+            esp_ble_conn_update_params_t conn_params = {
+                .min_int = 0x10,  // 20ms
+                .max_int = 0x20,  // 40ms
+                .latency = 0,
+                .timeout = 400,   // 4s supervision timeout
+            };
+            memcpy(conn_params.bda, param->connect.remote_bda, sizeof(conn_params.bda));
+            ESP_ERROR_CHECK(esp_ble_gap_update_conn_params(&conn_params));
             break;
 
         case ESP_GATTS_DISCONNECT_EVT:
@@ -170,11 +177,18 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
 
         case ESP_GATTS_WRITE_EVT:
             ESP_LOGI(TAG, "Write event, handle: %d", param->write.handle);
+            esp_gatt_rsp_t rsp = {};
+            rsp.attr_value.handle = param->write.handle;
+            rsp.attr_value.len = param->write.len;
+            memcpy(rsp.attr_value.value, param->write.value, param->write.len);
+            esp_ble_gatts_send_response(gatts_if_param, param->write.conn_id, param->write.trans_id,
+                                        ESP_GATT_OK, &rsp);
+
             if (param->write.handle == descr_handle && param->write.len == 2) {
                 uint16_t value = param->write.value[1] << 8 | param->write.value[0];
                 if (value == 0x0001) {
                     ESP_LOGI(TAG, "Client enabled notifications");
-                    send_ble_message("short:1");  // Sample notification
+                    // send_ble_message("short:1");  // Sample notification
                 } else if (value == 0x0000) {
                     ESP_LOGI(TAG, "Client disabled notifications");
                 }
@@ -200,6 +214,7 @@ void ble_server_init() {
     ESP_ERROR_CHECK(esp_bt_controller_enable(ESP_BT_MODE_BLE));
     ESP_ERROR_CHECK(esp_bluedroid_init());
     ESP_ERROR_CHECK(esp_bluedroid_enable());
+
 
     // ✅ 1. Set device name before starting GAP
     ESP_ERROR_CHECK(esp_bt_dev_set_device_name(device_name));

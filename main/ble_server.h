@@ -31,6 +31,15 @@ void app_notify_button_event(const char* type, int button_num);
  */
 void ble_server_init(void);
 
+/**
+ * @brief Sends a message over BLE (Bluetooth Low Energy).
+ *
+ * This function transmits the specified message string using the BLE interface.
+ *
+ * @param msg Pointer to a null-terminated string containing the message to send.
+ */
+void send_ble_message(const char* msg);
+
 #ifdef __cplusplus
 }
 #endif

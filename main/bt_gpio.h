@@ -23,6 +23,14 @@ extern "C" {
  */
 void init_buttons(void);
 
+/**
+ * @brief Get the index of a GPIO in the button_gpios array.
+ *
+ * @param gpio The GPIO number to search for.
+ * @return int The index if found, or -1 if not found.
+ */
+int get_button_index(gpio_num_t gpio);
+
 #ifdef __cplusplus
 }
 #endif

@@ -3,6 +3,8 @@
 #include "freertos/queue.h"
 #include "esp_log.h"
 #include "bt_event.h"
+#include "bt_gpio.h"
+#include "ble_server.h"
 
 // From your BLE code
 extern void app_notify_button_event(const char* type, int button_number);
@@ -14,11 +16,20 @@ static QueueHandle_t event_queue;
 
 static void bt_event_task(void *arg) {
     button_event_t evt;
+    char msg[32];
+    
     while (1) {
         if (xQueueReceive(event_queue, &evt, portMAX_DELAY)) {
             const char* type_str = (evt.type == BUTTON_EVENT_SHORT) ? "short" : "long";
-            ESP_LOGI(TAG, "Sending BLE event: %s:%d", type_str, evt.button_number);
-            // app_notify_button_event(type_str, evt.button_number);
+            int button_index = get_button_index(evt.button_number);
+            if (button_index < 0) {
+                ESP_LOGW(TAG, "Button index not found for GPIO %d", evt.button_number);
+                continue;
+            }
+            button_index++; // Convert to 1-based index for user-friendly output
+            snprintf(msg, sizeof(msg), "%s:%d", type_str, button_index);
+            ESP_LOGI(TAG, "Sending BLE event: %s", msg);
+            send_ble_message(msg);
         }
     }
 }
